@@ -4,13 +4,13 @@ class Tree:
     """
         Encapsula la lógica de las podas y la creación de las ramas, se le debe proporcionar los datos ya obtenidos del parquet
     """
-    def __init__(self, main_dataframe: pd.DataFrame, column_data: str, id_node: int = 0):
+    def __init__(self, main_dataframe: pd.DataFrame, column_data: str, id_node: int = 0, prune: bool = False):
         self.id_node = id_node
         self.tree_structure = {id_node: []}
         n = len(main_dataframe)
         self.data = pd.DataFrame({
             "id_node": [id_node] * n,
-            "id_data": main_dataframe[column_data].values,
+            "id_data": range(n) if prune else main_dataframe[column_data].values,
             "history_nodes": [[id_node] for _ in range(n)] #esto se tendra que modificar 
         })
     
@@ -55,14 +55,17 @@ class Tree:
         return resultado
 
     def cut_children(self, target: int):
-        targets = self.get_all_childrens(target)
+        """
+            Elimina solo un nodo de la lista de adyacencia
+        """
         parent = self.get_parent(target)
-        self.tree_structure[parent].remove(target)
-        for tar in targets:
-            print(tar)
-            self.data.loc[self.data['id_node'] == tar, 'id_node'] = parent
-            self.tree_structure.pop(tar)
-        
+        try:
+            print(self.tree_structure.get(parent))
+            self.tree_structure.get(parent).remove(target)
+        except KeyError:
+            pass
+        self.tree_structure.pop(target)
+
 
     def correlation_labelgroup_id_node(
         self,

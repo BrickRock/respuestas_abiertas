@@ -104,13 +104,18 @@ def new_branches(request : HttpRequest):
         arbol : Arbol = Arbol.objects.get(id=id_arbol)
     except Arbol.DoesNotExist:
         return HttpResponseNotFound("Árbol no encontrado")
+    if str(parent_node) not in arbol.tree_structure:
+        return HttpResponseNotFound("Nodo padre no encontrado")
     #creamos un arbol temporal para modificar la estructura con los datos provenientes de miniIO
     #solo obtengo el archivo parquet del nodo padre
     path_parquet_target = f"{BUCKET}/{name_parquet_file(id_usuario=arbol.id_usuario.pk, id_tree=arbol.pk, id_node=parent_node)}"
-    print(path_parquet_target)
-    dataframe_parquet = pd.read_parquet(path=path_parquet_target, filesystem=fs, engine="pyarrow")
+    try:
+        dataframe_parquet = pd.read_parquet(path=path_parquet_target, filesystem=fs, engine="pyarrow")
+    except Exception as e:
+        return HttpResponseNotFound(f"Error al obtener el archivo parquet del nodo padre {parent_node}, posiblemente el nodo no es una hoja")
     tree = Tree(dataframe_parquet, arbol.id_column_data)
     tree.tree_structure = normalized_keys(arbol.tree_structure) if arbol.tree_structure else {}
+
     #el id del nodo mayor sera el id_node inicial para las nuevas ramas
     tree.id_node = max(tree.tree_structure.keys()) if tree.tree_structure else 0
     #obtemos los ids en el orden en el que seran clasificados
@@ -141,7 +146,78 @@ def new_branches(request : HttpRequest):
         parquet_path = name_parquet_file(id_usuario=arbol.id_usuario.pk, id_tree=arbol.pk, id_node=node)
         #almaceno el archivo en minio
         save_or_update_tree_s3(parquet_path, df_node)
+    #borro el archivo parquet del nodo padre
+    fs.delete(f"{BUCKET}/{name_parquet_file(id_usuario=arbol.id_usuario.pk, id_tree=arbol.pk, id_node=parent_node)}")
     # actualizar la estructura del árbol en la base de datos
     arbol.tree_structure = tree.tree_structure
     arbol.save()
     return HttpResponse("Ramas creadas exitosamente")
+
+@csrf_exempt
+def prune_tree(request: HttpRequest):
+    """
+        Realiza la poda del árbol:
+        1. Obtiene el nodo seleccionado y su padre.
+        2. Mueve los datos del nodo hijo (y sus descendientes) al archivo parquet del padre.
+        3. Elimina los archivos parquet del hijo y descendientes.
+        4. Elimina el nodo hijo de la estructura del árbol.
+    """
+    id_arbol = request.GET.get('id_arbol')
+    id_node = request.GET.get('id_node')
+    
+    if not id_arbol or not id_node:
+         return HttpResponseNotFound("Faltan parámetros id_arbol o id_node")
+         
+
+    try:
+        arbol = Arbol.objects.get(id=id_arbol)
+    except Arbol.DoesNotExist:
+        return HttpResponseNotFound("Árbol no encontrado")
+    if id_node not in arbol.tree_structure:
+        return HttpResponseNotFound("Nodo no encontrado")
+
+    id_arbol = int(id_arbol)
+    id_node = int(id_node)
+
+    tree = Tree(column_data=arbol.id_column_data, id_node=id_node, main_dataframe=pd.DataFrame(), prune=True)
+    tree.tree_structure = normalized_keys(arbol.tree_structure) if arbol.tree_structure else {}
+    
+    # 1. Obtener padre
+    parent_node = tree.get_parent(id_node)
+    
+    all_childs = tree.get_all_childrens(id_node)
+    df_childs = pd.DataFrame()
+
+    #por cada hijo, obtengo el archivo parquet y lo concateno con el dataframe de los hijos
+    for child in all_childs:
+        path_child = f"{BUCKET}/{name_parquet_file(arbol.id_usuario.pk, arbol.pk, child)}"
+        #si no existe el archivo parquet o el nodo no existe en la estructura del árbol, lo omito
+        #lo anterior emulando una transacción o todo se hace o nada
+        if not fs.exists(path_child) or tree.tree_structure.get(child, None) is None:
+            continue
+        df_child = pd.read_parquet(path=path_child, filesystem=fs, engine="pyarrow")
+        df_childs = pd.concat([df_childs, df_child], ignore_index=True)
+        #elimino el nodo hijo de la estructura del árbol
+        tree.cut_children(child)
+        #elimino el archivo parquet del hijo
+        fs.rm(path_child)
+
+    #el dataframe df_childs contiene todos los datos de los hijos
+    df_childs['id_node'] = parent_node
+    df_childs['history_nodes'] = [[parent_node] for _ in range(len(df_childs))]
+    
+    #actualizo el archivo parquet del padre
+    path_parent = name_parquet_file(arbol.id_usuario.pk, arbol.pk, parent_node)
+    full_path_parent = f"{BUCKET}/{path_parent}"
+    if fs.exists(full_path_parent):
+        df_parent = pd.read_parquet(path=full_path_parent, filesystem=fs, engine="pyarrow")
+        df_childs = pd.concat([df_parent, df_childs], ignore_index=True)
+
+    print(path_parent)
+    print(df_childs.head())
+    save_or_update_tree_s3(path_parent, df_childs)       
+            
+    arbol.tree_structure = tree.tree_structure
+    arbol.save()
+    
+    return HttpResponse(f"Poda exitosa. Nodo {id_node} y {len(all_childs)} descendientes fusionados al padre {parent_node}.")

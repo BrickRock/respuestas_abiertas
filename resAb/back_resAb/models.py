@@ -6,6 +6,7 @@ class Usuario(models.Model):
     password = models.CharField(max_length=50, null=False)
 
 class Arbol(models.Model):
+    #hacer migración para elimnar el archivo_parquet
     archivo_parquet = models.CharField(max_length=100, null=False, unique=True)
     id_usuario = models.ForeignKey(Usuario, on_delete=models.CASCADE) 
     text_column = models.CharField(max_length=60, null=False, default="")
