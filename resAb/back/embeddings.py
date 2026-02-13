@@ -39,8 +39,8 @@ def get_embeddings_main(dataframe_csv : pd.DataFrame, text_column, ID_column = N
         })
     except:
         raise RuntimeError("Error al generar los embeddings")
-    if ID_column:
-        dataframe_output[ID_column] = dataframe_csv[ID_column].values
+    if ID_column: #necesitamos forzar a que sean todo texto
+        dataframe_output[ID_column] = dataframe_csv[ID_column].astype(str)
     else:
-        dataframe_output["ID"] =  range(len(list_text))
+        dataframe_output["ID"] = [str(i) for i in range(len(list_text))]
     return dataframe_output

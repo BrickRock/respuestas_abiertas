@@ -48,7 +48,7 @@ from django.http import (
 from .models import users
 
 def get_similar_embeddings(target_embedding : np.ndarray, embeddings_df : pd.DataFrame, min_similarity = 0.8) -> pd.DataFrame:
-    embeddings_matrix = np.vstack(embeddings_df['embedding'].values)
+    embeddings_matrix = np.vstack(embeddings_df['embedding'].values)#type: ignore
     if embeddings_matrix.shape[1] != len(target_embedding):
         raise ValueError(
             f"Dimensiones no coinciden: target={len(target_embedding)}, "
@@ -103,6 +103,8 @@ def new_analysis_request(request: HttpRequest):
     pk = graph.pk
     BASE_PATH = f"{user_id}/{pk}"
     data = pd.read_csv(file) #type: ignore 
+    if id_column is None:
+        data['ID'] = [ str(i) for i in range(data.shape[0])]
     embedding = get_embeddings_main(data, text_column=text_column, ID_column= id_column) # type: ignore
     # this can be upgrade to do one travel to storage, right now make 2 travels to save the data
     #save csv file
@@ -124,10 +126,14 @@ def new_analysis_request(request: HttpRequest):
 @csrf_exempt
 def search_similar(request: HttpRequest):
     """Vista para buscar embeddings similares"""
-    user_id = request.POST.get("user_id")
-    graph_id = request.POST.get("graph_id")
-    target_id = request.POST.get("target_id") # ID del embedding de referencia
-    min_sim = float(request.POST.get("min_similarity", 0.8))
+    try:
+        user_id = request.GET.get("user_id")
+        graph_id = request.GET.get("graph_id")
+        target_id = request.GET.get("target_id") # ID del embedding de referencia
+        min_sim = float(request.GET.get("min_similarity", 0.8))
+        is_preanalized = int(request.GET.get('preanalized', 0))
+    except Exception as e:
+        return HttpResponseBadRequest(f"Error en los datos proporcionados {e}")
     
     try:
         user = users.objects.get(id=user_id)
@@ -135,13 +141,22 @@ def search_similar(request: HttpRequest):
     except users.DoesNotExist or graphs.DoesNotExist:
         HttpResponseBadRequest("usuario o grafo no existe")
     
+    if is_preanalized == 1:
+        tmp_df :pd.DataFrame= read_tree_s3(f"{user_id}/{graph_id}/temp_emb.parquet")
+        data = tmp_df[tmp_df['similarity'] >= min_sim]
+        result = data[['similarity',graph.text_column, graph.id_column]] #type: ignore
+        return JsonResponse({
+            "count": len(result),
+            "results": result.to_dict('records'),
+            "keys" : { 'id' : graph.id_column, 'data' : graph.text_column, 'sim' : 'similarity'}#type: ignore
+        })
+
     # Cargar embeddings desde S3
     path = f"{user_id}/{graph_id}/embedding.parquet"
-    id_column = graph.id_column
+    id_column = graph.id_column #type: ignore   
     embeddings_df = read_tree_s3(path)
-    print(f"tipo del embedding {type(embeddings_df['ID'][0])} y tipo valor recibido {type(target_id)}")
     # Obtener embedding objetivo
-    target_row = embeddings_df[embeddings_df[id_column] == int(target_id)] #se tiene que manejar escenario donde el id es texto
+    target_row = embeddings_df[embeddings_df[id_column] == target_id] #se tiene que manejar escenario donde el id es texto
     if target_row.empty:
         return HttpResponseBadRequest("ID no encontrado")
     
@@ -150,7 +165,7 @@ def search_similar(request: HttpRequest):
     # Buscar similares
     similares = get_similar_embeddings(
         target_embedding=target_embedding,
-        embeddings_df=embeddings_df.drop(id_column, axis=1), # votar columna ID
+        embeddings_df=embeddings_df, 
         min_similarity=min_sim
     )
     
@@ -159,15 +174,61 @@ def search_similar(request: HttpRequest):
     original_data = read_tree_s3(data_path)
     
     # Merge con datos originales
-    result = similares.merge(original_data, on='ID', how='left')
-    
+    result = similares.merge(original_data, on=graph.id_column, how='left')#type: ignore
+    result = result[['similarity',graph.text_column, graph.id_column]] #type: ignore
     return JsonResponse({
         "count": len(result),
-        "results": result.to_dict(orient='records')
+        "results": result.to_dict('records'),
+        "keys" : { 'id' : graph.id_column, 'data' : graph.text_column, 'sim' : 'similarity'}#type: ignore
     })
 
-def name_new_analysis(id_user : int, id_graph) -> str:
-    return f"{str(id_user)}/{str(id_graph)}.parquet"
+def range_cos(min_cos : float, n_opc : int) -> list:
+    """
+        return a list of range that contain the max sim_cos of every n_opc
+    """
+    step = (1 - min_cos) / n_opc
+    return [min_cos - step + (step * cos) for cos in range(1, n_opc +1)]
+    
+@csrf_exempt
+def opc_cut(request : HttpRequest):
+    try:
+        n_opc = int(request.GET.get('n_opc', 3))
+        min_cos = float(request.GET.get('min_similarity', 0.85))
+        target_id = request.GET.get('target_id')
+        user_id = request.GET.get('user_id')
+        graph_id = request.GET.get('graph_id')
+    except Exception as e:
+        return HttpResponseBadRequest(f"Formato de los datos erroneo {e}")
+    if not (n_opc and min_cos and target_id):
+        return HttpResponseBadRequest("Datos incompletos en la solicitud")
+    try:
+        user = users.objects.get(id=user_id)
+        graph = graphs.objects.get(id_user=user, id=graph_id)
+    except users.DoesNotExist or graphs.DoesNotExist:
+        return HttpResponseBadRequest("Arbol o usuario no encontrado")
+    list_cos = range_cos(min_cos, n_opc)
+    list_cos.sort()
+    PATH_EMB = f"{user_id}/{graph_id}/embedding.parquet"
+    df_embedding : pd.DataFrame= read_tree_s3(PATH_EMB)
+    target_row = df_embedding[df_embedding[graph.id_column] == target_id].iloc[0]['embedding']
+
+    #make the cut and add the column similarity
+    df_embedding_min_cos = get_similar_embeddings(target_row, df_embedding, min_cos) #type: ignore
+
+    #add the data to the parquet file tmp
+    df_data :pd.DataFrame = read_tree_s3(f"{user_id}/{graph_id}/data.parquet")
+    df_embedding_min_cos = df_embedding_min_cos.merge(df_data, on=graph.id_column,how="left")
+    
+    PATH_EMB_TEMP = f"{user_id}/{graph_id}/temp_emb.parquet"
+    save_or_update_tree_s3(PATH_EMB_TEMP, df_embedding_min_cos)
+    
+    answer = []
+    #df_embedding_min_cos = get_similar_embeddings(target_row, df_embedding_min_cos, min_cos)
+    for cos in list_cos:
+        df_tmp : pd.DataFrame= df_embedding_min_cos[df_embedding_min_cos['similarity'] > cos]
+        border = df_tmp.iloc[[-1],[1,2,3]].iloc[0].values
+        answer.append({'id' : border[0], 'data' : border[2], 'sim' : float(border[1])})
+    return JsonResponse( { 'data' : answer})
 
 def index(request : HttpRequest) -> HttpResponse:
     archivo = request.FILES.get('archivo')
