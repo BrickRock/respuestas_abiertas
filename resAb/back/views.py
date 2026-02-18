@@ -187,6 +187,27 @@ def select_n_random_values(n : int, first : int, last : int)-> list:
     return ls
 
 @csrf_exempt
+def delete_temp_embedding_endpoint(request: HttpRequest):
+    """Endpoint para eliminar el tmp_embedding virtual"""
+    user_id = request.GET.get("user_id")
+    graph_id = request.GET.get("graph_id")
+    if not user_id or not graph_id:
+        return HttpResponseBadRequest("user_id y graph_id son requeridos")
+    try:
+        user = users.objects.get(id=user_id)
+        graph = graphs.objects.get(id_user=user, id=graph_id)
+    except (users.DoesNotExist, graphs.DoesNotExist):
+        return HttpResponseBadRequest("Usuario o grafo no encontrado")
+    BASE_PATH = f"{user_id}/{graph_id}/temp_emb.parquet"
+    delete_tmp_embedding(BASE_PATH)
+    
+    return HttpResponse(status=204)
+
+def delete_tmp_embedding(path :str):
+    delete_parquet_s3(path)
+
+
+@csrf_exempt
 def confirm_new_category(request : HttpRequest):
     """Vista para confirmar el nuevo nodo/cateogria seleccionada"""
     try:
@@ -205,6 +226,7 @@ def confirm_new_category(request : HttpRequest):
     #almacena el nodo definitivamente
     save_or_update_tree_s3(f"{BASE_PATH_USER}/{name_category}.parquet", read_tree_s3(f"{BASE_PATH_USER}/currentReview.parquet"))
     delete_parquet_s3(f"{BASE_PATH_USER}/currentReview.parquet")
+    delete_tmp_embedding(f"{BASE_PATH_USER}/temp_emb.parquet")
     new_node.save()
     return HttpResponse(status=204)
 
@@ -337,3 +359,66 @@ def index(request : HttpRequest) -> HttpResponse:
     if archivo:
         print(f"Archivo recibido: {archivo.name}")
     return render(request, 'resAb/index.html')
+
+@csrf_exempt
+def get_categorized_data(request: HttpRequest) -> HttpResponse:
+    """
+    Endpoint to get all data from a graph, merged with its categories, and returned as a CSV.
+    Query parameters: user_id, graph_id
+    """
+    try:
+        user_id = request.GET.get("user_id")
+        graph_id = request.GET.get("graph_id")
+    except Exception as e:
+        return HttpResponseBadRequest(f"Error en los datos proporcionados {e}")
+
+    if not user_id or not graph_id:
+        return HttpResponseBadRequest("user_id y graph_id son requeridos")
+
+    try:
+        user = users.objects.get(id=user_id)
+        graph = graphs.objects.get(id_user=user, id=graph_id)
+    except (users.DoesNotExist, graphs.DoesNotExist):
+        return HttpResponseBadRequest("Usuario o grafo no existe")
+
+    BASE_PATH = f"{user_id}/{graph_id}"
+    id_column = graph.id_column
+    text_column = graph.text_column
+
+    try:
+        main_df = read_tree_s3(f"{BASE_PATH}/data.parquet")
+    except FileNotFoundError:
+        return HttpResponseBadRequest("El archivo data.parquet no se encontró para el grafo especificado.")
+    
+    # Initialize 'categorias' column as empty lists
+    main_df['categorias'] = [[] for _ in range(len(main_df))]
+
+    # Fetch all nodes for the graph
+    graph_nodes = nodes.objects.filter(graph=graph)
+
+    for node in graph_nodes:
+        node_name = node.node_name
+        try:
+            category_df = read_tree_s3(f"{BASE_PATH}/{node_name}.parquet")
+            # Update 'categorias' column in main_df
+            for index, row in category_df.iterrows():
+                # Find the corresponding row in main_df using id_column
+                # Assuming id_column uniquely identifies rows in main_df
+                main_df_index = main_df[main_df[id_column] == row[id_column]].index
+                if not main_df_index.empty:
+                    main_df.loc[main_df_index[0], 'categorias'].append(node_name)
+        except FileNotFoundError:
+            # If a category parquet file is not found, skip it
+            print(f"Warning: Category parquet file for node '{node_name}' not found. Skipping.")
+            continue
+        except Exception as e:
+            print(f"Error processing category '{node_name}': {e}")
+            continue
+
+    # Convert the list of categories to a comma-separated string for CSV output
+    main_df['categorias'] = main_df['categorias'].apply(lambda x: ','.join(x))
+
+    response = HttpResponse(content_type='text/csv')
+    response['Content-Disposition'] = f'attachment; filename="{graph_id}_categorized_data.csv"'
+    main_df.to_csv(path_or_buf=response, index=False)
+    return response
