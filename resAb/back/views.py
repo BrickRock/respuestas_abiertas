@@ -208,40 +208,73 @@ def sample(request : HttpRequest) -> HttpResponse:
     try:
         user_id = request.GET.get("user_id")
         graph_id = request.GET.get("graph_id")
-        random = request.GET.get("random", 1) # 0 paginado, 1 - random
+        random_sample = int(request.GET.get("random", 1)) # 0 paginado, 1 - random
         type_sample = int(request.GET.get("sample", 0)) # 0 - all data, 1 - category, 2 - currente category 
         sample_size = int(request.GET.get("ss", 5))
         category = request.GET.get("category", None)
+        page = int(request.GET.get("page", 1))
+        page_size = int(request.GET.get("page_size", 10))
     except Exception as e:
         return HttpResponseBadRequest(f"Error en los datos proporcionados {e}")
     try:
         user = users.objects.get(id=user_id)
         graph = graphs.objects.get(id_user=user, id=graph_id)
-    except users.DoesNotExist or graphs.DoesNotExist:
-        HttpResponseBadRequest("usuario o grafo no existe")
+    except (users.DoesNotExist, graphs.DoesNotExist):
+        return HttpResponseBadRequest("usuario o grafo no existe")
     BASE_PATH = f"{user_id}/{graph_id}"
+    
+    data_to_return = pd.DataFrame()
+
     if type_sample == 0:
         #sobre todo los datos
-        data = read_tree_s3(f"{user_id}/{graph_id}/")#type: ignore
+        data = read_tree_s3(f"{user_id}/{graph_id}/data.parquet")#type: ignore
         size = data.shape[0]
-        list_data_selected = select_n_random_values(sample_size, 0, size)
-        print(data.iloc[list_data_selected])
+        if random_sample == 1: # Random sampling
+            sample_size = sample_size if sample_size < size else size
+            list_data_selected = select_n_random_values(sample_size, 0, size - 1)
+            data_to_return = data.iloc[list_data_selected]
+        else: # Paginado
+            start_index = (page - 1) * page_size
+            end_index = start_index + page_size
+            data_to_return = data.iloc[start_index:end_index]
+
     elif type_sample == 1:
         #sobre una cateogria
         try:
             data = read_tree_s3(f"{BASE_PATH}/{category}.parquet")#type: ignore
-        except:
+        except Exception:
             return HttpResponseBadRequest("Categoria invalida")
         size = data.shape[0] 
-        sample_size = sample_size if sample_size < size else size
-        list_data_selected : list = select_n_random_values(sample_size, 0, size - 1)
-        print(f"{size} y tamaño de la muestra seleccionado {list_data_selected}")
-        data :  pd.DataFrame = data.iloc[list_data_selected]
+        if random_sample == 1: # Random sampling
+            sample_size = sample_size if sample_size < size else size
+            list_data_selected : list = select_n_random_values(sample_size, 0, size - 1)
+            data_to_return = data.iloc[list_data_selected]
+        else: # Paginado
+            start_index = (page - 1) * page_size
+            end_index = start_index + page_size
+            data_to_return = data.iloc[start_index:end_index]
     else:
-        pass
         #sobre la categoria actual
-        print(data)
-    return JsonResponse(data.to_dict("records"))
+        # Assuming 'currentReview.parquet' holds the current category data
+        try:
+            data = read_tree_s3(f"{BASE_PATH}/currentReview.parquet") #type: ignore
+        except Exception:
+            return HttpResponseBadRequest("No hay categoria actual en revisión")
+        size = data.shape[0]
+        if random_sample == 1: # Random sampling
+            sample_size = sample_size if sample_size < size else size
+            list_data_selected = select_n_random_values(sample_size, 0, size - 1)
+            data_to_return = data.iloc[list_data_selected]
+        else: # Paginado
+            start_index = (page - 1) * page_size
+            end_index = start_index + page_size
+            data_to_return = data.iloc[start_index:end_index]
+    
+    # Format the output
+    result = data_to_return[[graph.id_column, graph.text_column]].rename(
+        columns={graph.id_column: 'id', graph.text_column: 'value'}
+    )
+    return JsonResponse(result.to_dict("records"))
 
 def range_cos(min_cos : float, n_opc : int) -> list:
     """
