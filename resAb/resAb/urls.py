@@ -23,4 +23,6 @@ urlpatterns = [
     path('new_analysis', views.new_analysis_request),
     path('get_similarity', views.search_similar),
     path('opc_cut', views.opc_cut),
+    path('new_category', views.confirm_new_category),
+    path('sample', views.sample),
 ]

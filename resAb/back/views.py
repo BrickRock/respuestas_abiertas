@@ -1,12 +1,11 @@
 import pandas as pd
 from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
-from django.http import HttpResponse, HttpRequest, HttpResponseBadRequest
-import s3fs, os
+from django.http import HttpResponse, HttpRequest, HttpResponseBadRequest, JsonResponse
+import s3fs, os, random
 from .embeddings import get_embeddings_main
-from .models import users, graphs
+from .models import users, graphs, edge, nodes
 import numpy as np
-from math import sqrt
 
 
 # Create your views here.
@@ -39,13 +38,12 @@ def read_tree_s3(path : str) -> pd.DataFrame:
     )
     return data
 
-import json
-from django.http import (
-    HttpRequest,
-    JsonResponse,
-    HttpResponseBadRequest,
-)
-from .models import users
+def delete_parquet_s3(path : str):
+    full_path = f"{BUCKET}/{path}"
+    if not fs.exists(full_path):
+        raise FileNotFoundError(f"El archivo {full_path} no existe en el bucket {BUCKET}")
+    fs.rm(full_path)
+
 
 def get_similar_embeddings(target_embedding : np.ndarray, embeddings_df : pd.DataFrame, min_similarity = 0.8) -> pd.DataFrame:
     embeddings_matrix = np.vstack(embeddings_df['embedding'].values)#type: ignore
@@ -145,42 +143,105 @@ def search_similar(request: HttpRequest):
         tmp_df :pd.DataFrame= read_tree_s3(f"{user_id}/{graph_id}/temp_emb.parquet")
         data = tmp_df[tmp_df['similarity'] >= min_sim]
         result = data[['similarity',graph.text_column, graph.id_column]] #type: ignore
-        return JsonResponse({
-            "count": len(result),
-            "results": result.to_dict('records'),
-            "keys" : { 'id' : graph.id_column, 'data' : graph.text_column, 'sim' : 'similarity'}#type: ignore
-        })
+    else:
+        # Cargar embeddings desde S3
+        path = f"{user_id}/{graph_id}/embedding.parquet"
+        id_column = graph.id_column #type: ignore   
+        embeddings_df = read_tree_s3(path)
+        # Obtener embedding objetivo
+        target_row = embeddings_df[embeddings_df[id_column] == target_id] #se tiene que manejar escenario donde el id es texto
+        if target_row.empty:
+            return HttpResponseBadRequest("ID no encontrado")
 
-    # Cargar embeddings desde S3
-    path = f"{user_id}/{graph_id}/embedding.parquet"
-    id_column = graph.id_column #type: ignore   
-    embeddings_df = read_tree_s3(path)
-    # Obtener embedding objetivo
-    target_row = embeddings_df[embeddings_df[id_column] == target_id] #se tiene que manejar escenario donde el id es texto
-    if target_row.empty:
-        return HttpResponseBadRequest("ID no encontrado")
-    
-    target_embedding = target_row.iloc[0]['embedding']
-    
-    # Buscar similares
-    similares = get_similar_embeddings(
-        target_embedding=target_embedding,
-        embeddings_df=embeddings_df, 
-        min_similarity=min_sim
-    )
-    
-    # Cargar datos originales para mostrar texto
-    data_path = f"{user_id}/{graph_id}/data.parquet"
-    original_data = read_tree_s3(data_path)
-    
-    # Merge con datos originales
-    result = similares.merge(original_data, on=graph.id_column, how='left')#type: ignore
-    result = result[['similarity',graph.text_column, graph.id_column]] #type: ignore
+        target_embedding = target_row.iloc[0]['embedding']
+
+        # Buscar similares
+        similares = get_similar_embeddings(
+            target_embedding=target_embedding,
+            embeddings_df=embeddings_df, 
+            min_similarity=min_sim
+        )
+
+        # Cargar datos originales para mostrar texto
+        data_path = f"{user_id}/{graph_id}/data.parquet"
+        original_data = read_tree_s3(data_path)
+
+        # Merge con datos originales
+        result = similares.merge(original_data, on=graph.id_column, how='left')#type: ignore
+        result = result[['similarity',graph.text_column, graph.id_column]] #type: ignore
+        #save data untill the user confirm de new node
+    save_or_update_tree_s3(f"{user_id}/{graph_id}/currentReview.parquet",result)
     return JsonResponse({
         "count": len(result),
         "results": result.to_dict('records'),
         "keys" : { 'id' : graph.id_column, 'data' : graph.text_column, 'sim' : 'similarity'}#type: ignore
     })
+
+def select_n_random_values(n : int, first : int, last : int)-> list:
+    return [random.randint(first, last) for i in range(n)]
+
+@csrf_exempt
+def confirm_new_category(request : HttpRequest):
+    """Vista para confirmar el nuevo nodo/cateogria seleccionada"""
+    try:
+        user_id = request.GET.get("user_id")
+        graph_id = request.GET.get("graph_id")
+        name_category = request.GET.get("name") # ID del embedding de referencia
+    except Exception as e:
+        return HttpResponseBadRequest(f"Error en los datos proporcionados {e}")
+    try:
+        user = users.objects.get(id=user_id)
+        graph = graphs.objects.get(id_user=user, id=graph_id)
+    except users.DoesNotExist or graphs.DoesNotExist:
+        HttpResponseBadRequest("usuario o grafo no existe")
+    new_node = nodes(node_name=name_category, graph=graph)#type: ignore
+    BASE_PATH_USER =f"{user_id}/{graph_id}"
+    #almacena el nodo definitivamente
+    save_or_update_tree_s3(f"{BASE_PATH_USER}/{name_category}.parquet", read_tree_s3(f"{BASE_PATH_USER}/currentReview.parquet"))
+    delete_parquet_s3(f"{BASE_PATH_USER}/currentReview.parquet")
+    new_node.save()
+    return HttpResponse(status=204)
+
+@csrf_exempt
+def sample(request : HttpRequest) -> HttpResponse:
+    """Vista para obtener una muestra del conjunto"""
+    try:
+        user_id = request.GET.get("user_id")
+        graph_id = request.GET.get("graph_id")
+        random = request.GET.get("random", 1) # 0 paginado, 1 - random
+        type_sample = int(request.GET.get("sample", 0)) # 0 - all data, 1 - category, 2 - currente category 
+        sample_size = int(request.GET.get("ss", 5))
+        category = request.GET.get("category", None)
+    except Exception as e:
+        return HttpResponseBadRequest(f"Error en los datos proporcionados {e}")
+    try:
+        user = users.objects.get(id=user_id)
+        graph = graphs.objects.get(id_user=user, id=graph_id)
+    except users.DoesNotExist or graphs.DoesNotExist:
+        HttpResponseBadRequest("usuario o grafo no existe")
+    BASE_PATH = f"{user_id}/{graph_id}"
+    if type_sample == 0:
+        #sobre todo los datos
+        data = read_tree_s3(f"{user_id}/{graph_id}/")#type: ignore
+        size = data.shape[0]
+        list_data_selected = select_n_random_values(sample_size, 0, size)
+        print(data.iloc[list_data_selected])
+    elif type_sample == 1:
+        #sobre una cateogria
+        try:
+            data = read_tree_s3(f"{BASE_PATH}/{category}.parquet")#type: ignore
+        except:
+            return HttpResponseBadRequest("Categoria invalida")
+        size = data.shape[0] 
+        sample_size = sample_size if sample_size < size else size
+        list_data_selected : list = select_n_random_values(sample_size, 0, size - 1)
+        print(f"{size} y tamaño de la muestra seleccionado {list_data_selected}")
+        data :  pd.DataFrame = data.iloc[list_data_selected]
+    else:
+        pass
+        #sobre la categoria actual
+        print(data)
+    return JsonResponse(data.to_dict("records"))
 
 def range_cos(min_cos : float, n_opc : int) -> list:
     """
