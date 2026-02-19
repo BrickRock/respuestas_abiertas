@@ -53,20 +53,41 @@ interface ButtonNavigateProps {
 function ButtonNavigate({ page, pageSize, totalItems, setPage }: ButtonNavigateProps)
 {
     const totalPages = Math.ceil(totalItems / pageSize);
+    const [valueUserPage, setValue] = useState(1);
 
     return(
         <div>
-            <button onClick={() => setPage(prev => Math.max(1, prev - 1))} disabled={page === 1}>Atras</button>
-            <button onClick={() => setPage(prev => Math.min(totalPages, prev + 1))} disabled={page === totalPages}>Siguiente</button>
+            <button onClick={() => {setPage(prev => Math.max(1, prev - 1)); 
+                setValue(page -1);
+            }
+            } disabled={page === 1}>Atras</button>
+            <button onClick={() => {setPage(prev => Math.min(totalPages, prev + 1)); setValue(page +1);}} disabled={page === totalPages}>Siguiente</button>
             <p>
-                <input type="text" value={page} onChange={(e) => {
+                <input type="text" value={valueUserPage} onChange={(e) => {
+                    setValue(e.target.value);
+                    setTimeout(()=>{
                     const newPage = parseInt(e.target.value);
                     if (!isNaN(newPage) && newPage >= 1 && newPage <= totalPages) {
                         setPage(newPage);
-                    }
+                        
+                    }},500)
+                    
                 }}/> - {totalPages}
             </p>
         </div>
+    )
+}
+
+const ButtonNewSampleRandom : any = ({setQuery, query} : {setQuery : any, query : boolean})=>{
+    return (
+        <button onClick={(e) => {
+            setQuery(!query);
+            console.log(query);
+            
+            }}>
+
+            Otros datos
+        </button>
     )
 }
 
@@ -74,12 +95,12 @@ function DisplaySample(){
     const [sampleData, setSampleData] = useState<Data[]>([]);
     const [random, setRandom] = useState<number>(1); // 1 for random, 0 for paginated
     const [typeSample, setTypeSample] = useState<number>(0); // 0 - all data, 1 - category, 2 - current category
-    const [sampleSize, setSampleSize] = useState<number>(5); // For random sampling
+    const [sampleSize, setSampleSize] = useState<number>(10); // For random sampling
     const [category, setCategory] = useState<string | null>(null); // For category-based sampling
     const [page, setPage] = useState<number>(1); // For pagination
     const [pageSize, setPageSize] = useState<number>(10); // For pagination
     const [totalItems, setTotalItems] = useState<number>(0); // Total items for pagination
-
+    const [query, setQuery] = useState(false);
     // Dummy user_id and graph_id for now, these should come from context or props
     const user_id = "1"; 
     const graph_id = "5";
@@ -91,7 +112,7 @@ function DisplaySample(){
             if (random === 1) {
                 url += `&random=1&ss=${sampleSize}`;
             } else {
-                url += `&random=0&page=${page}&page_size=${pageSize}`;
+                url += `&random=0&page=${page}&page_size=${sampleSize}`;
             }
 
             if (typeSample === 1 && category) {
@@ -104,6 +125,7 @@ function DisplaySample(){
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
                 let dataJson = await response.json();
+                console.log(dataJson)
                 setSampleData(dataJson.data);
                 // Assuming the API returns total items for pagination, if not, we might need another endpoint or calculate it
                 // For now, let's assume the API returns a 'total' field in the response for paginated data
@@ -119,7 +141,7 @@ function DisplaySample(){
             }
         };
         fetchData();
-    }, [random, typeSample, sampleSize, category, page, pageSize, user_id, graph_id]) // Dependencies for useEffect
+    }, [random, typeSample, sampleSize, category, page, pageSize, user_id, graph_id, query]) // Dependencies for useEffect
     
     return (
         <div className='Sample'>
@@ -127,8 +149,9 @@ function DisplaySample(){
             <ButtonTypeSample random={random} setRandom={setRandom} />
             <DisplayData data={sampleData} />
             {random === 0 && ( // Only show navigation buttons if in paginated mode
-                <ButtonNavigate page={page} pageSize={pageSize} totalItems={totalItems} setPage={setPage} />
+                <ButtonNavigate page={page} pageSize={sampleSize} totalItems={totalItems} setPage={setPage} />
             )}
+            {random === 1 && (<ButtonNewSampleRandom setQuery={setQuery} query={query}/>)}
         </div>
     )
 }

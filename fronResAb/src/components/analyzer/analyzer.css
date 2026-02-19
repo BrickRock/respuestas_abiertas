@@ -1,0 +1,14 @@
+/*desktop display*/
+.graph{
+    flex: 1;
+}
+
+.desk{
+    flex: 1;
+}
+
+.analyzer{
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+}

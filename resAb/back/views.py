@@ -304,7 +304,8 @@ def sample(request : HttpRequest) -> HttpResponse:
         columns={graph.id_column: 'id', graph.text_column: 'data'}
     )
     print(result)
-    return JsonResponse({"data" : result.to_dict("records")})
+    return JsonResponse({"data" : result.to_dict("records"),
+                         "total_items" : data.shape[0]})
 
 def range_cos(min_cos : float, n_opc : int) -> list:
     """
