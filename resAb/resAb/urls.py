@@ -26,5 +26,7 @@ urlpatterns = [
     path('new_category', views.confirm_new_category),
     path('sample', views.sample),
     path('delete_tmp', views.delete_temp_embedding_endpoint),
-    path('get_categorized_data', views.get_categorized_data)
+    path('get_categorized_data', views.get_categorized_data),
+    path('get_full_graph', views.get_full_graph),
+    path('add_edge', views.add_edge)#add_edge
 ]

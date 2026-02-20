@@ -1,7 +1,18 @@
 import {useState, useEffect} from 'react'
 import './analyzer.css'
 import { ROUTES } from '../../routes.ts'
-
+import React, { useCallback, useRef } from 'react';
+import {
+  Background,
+  ReactFlow,
+  useNodesState,
+  useEdgesState,
+  addEdge,
+  useReactFlow,
+  ReactFlowProvider,
+} from '@xyflow/react';
+ 
+import '@xyflow/react/dist/style.css';
 
 
 /*const sampleData: Data[] = [
@@ -163,6 +174,7 @@ function DisplaySample({setOptions, setTarget, setComponent, initialTypeSample =
                 <ButtonNavigate page={page} pageSize={sampleSize} totalItems={totalItems} setPage={setPage} />
             )}
             {random === 1 && (<ButtonNewSampleRandom setQuery={setQuery} query={query}/>)}
+            {typeSample===2 && <div><button onClick={e => setComponent(2)}>volver</button><button onClick={e => setComponent(4)}>Siguiente</button></div>}
         </div>
     )
 }
@@ -207,14 +219,62 @@ function DisplayOptionsCut({ dataTarget, dataTargetID, options, setComponent, us
     )
 }
 
+interface ConfirmCategoryProps {
+    user_id: string;
+    graph_id: string;
+    setComponent: (component: number) => void;
+}
 
+export function ConfirmCategory({ user_id, graph_id, setComponent }: ConfirmCategoryProps) {
+    const [categoryName, setCategoryName] = useState("");
 
-function SectionGraph() {
+    const handleConfirm = async () => {
+        const url = `${ROUTES.new_category}?user_id=${user_id}&graph_id=${graph_id}&name=${categoryName}`;
+        try {
+            const response = await fetch(url);
+            if (response.ok) {
+                setComponent(1);
+            } else {
+                console.error("Error confirming category:", response.status);
+            }
+        } catch (error) {
+            console.error("Error fetching new_category:", error);
+        }
+    };
+
     return (
-        <section className='graph'>
-        </section>
+        <div className='confirm_category'>
+            <h1>Nombra la nueva categoría</h1>
+            <input 
+                type="text" 
+                value={categoryName} 
+                onChange={(e) => setCategoryName(e.target.value)} 
+                placeholder="Nombre de la categoría"
+            />
+            <div>
+                <button onClick={() => setComponent(3)}>Atras</button>
+                <button onClick={handleConfirm}>Confirmar</button>
+            </div>
+        </div>
     )
 }
+
+function SectionGraph({graph_id} : any){
+
+    const getGraph = async ()=> {
+        let response = await fetch(`${ROUTES.get_graph}?graph_id=${graph_id}`);
+        if(!response.ok) console.error("error al obtener el grafo");
+        let structure_graph = await response.json();
+        
+    }   
+
+    return (
+        <div className='graph'>
+
+        </div>
+    )
+}
+
 
 function SectionDesk() {
     const [currentComponent, setCurrentComponent] = useState(1); // 1 - show data to select /2 - Show options to cut / 3- Show sample of data select / 4- Show confirm
@@ -227,7 +287,7 @@ function SectionDesk() {
             {currentComponent === 1 && <DisplaySample setOptions={setOptionsCut} setComponent={setCurrentComponent} setTarget={setTarget} />}
             {currentComponent === 2 && target && <DisplayOptionsCut dataTarget={target.data} dataTargetID={target.id} options={optionsCut} setComponent={setCurrentComponent} user_id={user_id} graph_id={graph_id} />}
             {currentComponent === 3 && <DisplaySample setOptions={setOptionsCut} setComponent={setCurrentComponent} setTarget={setTarget} initialTypeSample={2} />}
-            {currentComponent === 4 && <div />}
+            {currentComponent === 4 && <ConfirmCategory setComponent={setCurrentComponent} user_id={user_id} graph_id={graph_id}/>}
         </section>
     )
 }

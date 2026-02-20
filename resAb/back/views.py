@@ -4,8 +4,9 @@ from django.views.decorators.csrf import csrf_exempt
 from django.http import HttpResponse, HttpRequest, HttpResponseBadRequest, JsonResponse
 import s3fs, os, random
 from .embeddings import get_embeddings_main
-from .models import users, graphs, edge, nodes
+from .models import users, graphs, edge, nodes, relationship
 import numpy as np
+import json
 
 
 # Create your views here.
@@ -423,3 +424,109 @@ def get_categorized_data(request: HttpRequest) -> HttpResponse:
     response['Content-Disposition'] = f'attachment; filename="{graph_id}_categorized_data.csv"'
     main_df.to_csv(path_or_buf=response, index=False)
     return response
+
+@csrf_exempt
+def get_full_graph(request: HttpRequest):
+    """
+    Vista para obtener la estructura completa de un grafo, mostrando las relaciones entre nodos.
+    """
+    graph_id = request.GET.get("graph_id")
+    if not graph_id:
+        return HttpResponseBadRequest("Falta el parámetro 'graph_id'")
+
+    try:
+        # Validar que el grafo existe.
+        graph_obj = graphs.objects.get(id=graph_id)
+        
+        # Obtener todos los nodos del grafo.
+        all_nodes = nodes.objects.filter(graph=graph_obj)
+        
+        # Obtener todas las aristas de esos nodos (solo las que se originan en ellos).
+        # Hacemos un prefetch para optimizar.
+        edges = edge.objects.filter(from_node__in=all_nodes).select_related('from_node', 'to_node', 'relation')
+
+        graph_structure = {}
+
+        # Inicializamos la estructura para todos los nodos.
+        for node in all_nodes:
+            graph_structure[node.node_name] = {}
+
+        # Llenamos con las transiciones existentes.
+        for e in edges:
+            from_name = e.from_node.node_name
+            to_name = e.to_node.node_name
+            relation_id = e.relation.id
+            graph_structure[from_name][relation_id] = to_name
+
+        # Para los nodos sin transiciones de salida, asignar 0.
+        for node_name, transitions in graph_structure.items():
+            if not transitions:
+                graph_structure[node_name] = 0
+                
+        return JsonResponse(graph_structure)
+
+    except graphs.DoesNotExist:
+        return HttpResponseBadRequest("El grafo no existe")
+    except Exception as e:
+        # Consider logging the exception.
+        return HttpResponse(f"Error inesperado: {e}", status=500)
+
+@csrf_exempt
+def add_edge(request: HttpRequest):
+    """
+    Endpoint para crear o actualizar una relación (edge) entre dos nodos.
+    Recibe: user_id, graph_id, node_id_1, node_id_2, connection_type (todos enteros).
+    """
+    if request.method != "POST":
+        return HttpResponseBadRequest("Método no permitido")
+
+    try:
+        body = json.loads(request.body)
+        user_id = body.get("user_id")
+        graph_id = body.get("graph_id")
+        node_id_1 = body.get("node_id_1")
+        node_id_2 = body.get("node_id_2")
+        connection_type = body.get("connection_type")
+
+        if not all([user_id, graph_id, node_id_1, node_id_2, connection_type]):
+            return HttpResponseBadRequest("Faltan parámetros obligatorios")
+
+        # Verificar existencia de usuario
+        try:
+            user_obj = users.objects.get(id=user_id)
+        except users.DoesNotExist:
+            return HttpResponseBadRequest("Usuario no encontrado")
+
+        # Verificar existencia de grafo y que pertenezca al usuario
+        try:
+            graph_obj = graphs.objects.get(id=graph_id, id_user=user_obj)
+        except graphs.DoesNotExist:
+            return HttpResponseBadRequest("Grafo no encontrado o no pertenece al usuario")
+
+        # Verificar existencia de ambos nodos y que pertenezcan al grafo
+        try:
+            node1 = nodes.objects.get(id=node_id_1, graph=graph_obj)
+            node2 = nodes.objects.get(id=node_id_2, graph=graph_obj)
+        except nodes.DoesNotExist:
+            return HttpResponseBadRequest("Uno o ambos nodos no encontrados en este grafo")
+
+        # Verificar existencia del tipo de relación
+        try:
+            rel_obj = relationship.objects.get(id=connection_type)
+        except relationship.DoesNotExist:
+            return HttpResponseBadRequest("Tipo de conexión (relación) no encontrado")
+
+        # Verificar si ya existe una relación entre ambos nodos
+        # Si existe, sobreescribimos la relación.
+        edge_obj = edge.objects.filter(from_node=node1, to_node=node2).first()
+        
+        if edge_obj:
+            edge_obj.relation = rel_obj
+            edge_obj.save()
+        else:
+            edge.objects.create(from_node=node1, to_node=node2, relation=rel_obj)
+
+        return HttpResponse("OK", status=200)
+
+    except Exception as e:
+        return HttpResponse(f"Error inesperado: {e}", status=500)
