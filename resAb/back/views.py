@@ -523,3 +523,36 @@ def add_edge(request: HttpRequest):
 
     except Exception as e:
         return HttpResponse(f"Error inesperado: {e}", status=500)
+    
+
+@csrf_exempt
+def get_user_graphs(request: HttpRequest):
+    """
+    Endpoint para obtener todos los grafos asociados a un usuario.
+    Recibe user_id por GET.
+    """
+    user_id = request.GET.get("user_id")
+    if not user_id:
+        return HttpResponseBadRequest("Falta el parámetro 'user_id'")
+    
+    try:
+        user_obj = users.objects.get(id=user_id)
+        user_graphs = graphs.objects.filter(id_user=user_obj)
+        
+        results = []
+        for g in user_graphs:
+            # Intentamos extraer un nombre legible del path o usamos un default
+           
+            
+            name = g.name if g.name else f"Grafo {g.id}"
+            results.append({
+                "name": name,
+                "id": g.id,
+                "date": 0  # El modelo actual no tiene campo de fecha
+            })
+            
+        return JsonResponse(results, safe=False)
+    except users.DoesNotExist:
+        return HttpResponseBadRequest("Usuario no encontrado")
+    except Exception as e:
+        return HttpResponse(f"Error inesperado: {e}", status=500)

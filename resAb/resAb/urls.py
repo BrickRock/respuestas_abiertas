@@ -28,5 +28,6 @@ urlpatterns = [
     path('delete_tmp', views.delete_temp_embedding_endpoint),
     path('get_categorized_data', views.get_categorized_data),
     path('get_full_graph', views.get_full_graph),
-    path('add_edge', views.add_edge)#add_edge
+    path('add_edge', views.add_edge),#add_edge
+    path('get_user_graphs', views.get_user_graphs)
 ]

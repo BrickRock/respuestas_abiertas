@@ -127,7 +127,7 @@ const ButtonNewSampleRandom: any = ({ setQuery, query }: { setQuery: any, query:
     )
 }
 
-function DisplaySample({ setOptions, setTarget, setComponent, initialTypeSample = 0 }: any) {
+function DisplaySample({ setOptions, setTarget, setComponent, initialTypeSample = 0, graph_id}: any) {
     const [sampleData, setSampleData] = useState<Data[]>([]);
     const [random, setRandom] = useState<number>(1); // 1 for random, 0 for paginated
     const [typeSample, setTypeSample] = useState<number>(initialTypeSample); // 0 - all data, 1 - category, 2 - current category
@@ -139,7 +139,6 @@ function DisplaySample({ setOptions, setTarget, setComponent, initialTypeSample 
     const [query, setQuery] = useState(false);
     // Dummy user_id and graph_id for now, these should come from context or props
     const [user_id] = useState("1");
-    const [graph_id] = useState("5");
 
     useEffect(() => {
         const fetchData = async () => {
@@ -230,9 +229,11 @@ interface ConfirmCategoryProps {
     user_id: string;
     graph_id: string;
     setComponent: (component: number) => void;
+        setExec: (exec: boolean) => void;
+    exec: boolean;
 }
 
-export function ConfirmCategory({ user_id, graph_id, setComponent }: ConfirmCategoryProps) {
+export function ConfirmCategory({ user_id, graph_id, setComponent, setExec, exec }: ConfirmCategoryProps) {
     const [categoryName, setCategoryName] = useState("");
 
     const handleConfirm = async () => {
@@ -240,6 +241,7 @@ export function ConfirmCategory({ user_id, graph_id, setComponent }: ConfirmCate
         try {
             const response = await fetch(url);
             if (response.ok) {
+                setExec(!exec);
                 setComponent(1);
             } else {
                 console.error("Error confirming category:", response.status);
@@ -295,7 +297,7 @@ const edgeTypes = {
     '5': CustomEdge5,
 };
 
-function SectionGraph({ exec, graph_id = 5 }: any) {
+function SectionGraph({ exec = false, graph_id }: any) {
     const relations = {
         1: { "type": "Se asocia con " },
         2: { "type": "Es parte de" },
@@ -384,7 +386,7 @@ function SectionGraph({ exec, graph_id = 5 }: any) {
         };
 
         getGraph();
-    }, [graph_id, setNodes, setEdges]);
+    }, [graph_id, setEdges, setNodes, exec]);
 
     return (
         <div className='graph' style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -419,28 +421,30 @@ function SectionGraph({ exec, graph_id = 5 }: any) {
 }
 
 
-function SectionDesk() {
+function SectionDesk({exec, setExec, user_id, graph_id} : any) {
     const [currentComponent, setCurrentComponent] = useState(1); // 1 - show data to select /2 - Show options to cut / 3- Show sample of data select / 4- Show confirm
     const [optionsCut, setOptionsCut] = useState<Array<{ id: number | string, data: string, sim: number }>>([])
     const [target, setTarget] = useState<{ data: string, id: number | string }>();
-    const user_id = "1";
-    const graph_id = "5";
+    //if(currentComponent === 1) setExec(!exec);
     return (
         <section className='desk'>
-            {currentComponent === 1 && <DisplaySample setOptions={setOptionsCut} setComponent={setCurrentComponent} setTarget={setTarget} />}
+            {currentComponent === 1 && <DisplaySample setOptions={setOptionsCut} setComponent={setCurrentComponent} setTarget={setTarget} graph_id={graph_id} />}
             {currentComponent === 2 && target && <DisplayOptionsCut dataTarget={target.data} dataTargetID={target.id} options={optionsCut} setComponent={setCurrentComponent} user_id={user_id} graph_id={graph_id} />}
-            {currentComponent === 3 && <DisplaySample setOptions={setOptionsCut} setComponent={setCurrentComponent} setTarget={setTarget} initialTypeSample={2} />}
-            {currentComponent === 4 && <ConfirmCategory setComponent={setCurrentComponent} user_id={user_id} graph_id={graph_id} />}
+            {currentComponent === 3 && <DisplaySample setOptions={setOptionsCut} setComponent={setCurrentComponent} setTarget={setTarget} initialTypeSample={2}  graph_id={graph_id} />}
+            {currentComponent === 4 && <ConfirmCategory setComponent={setCurrentComponent} user_id={user_id} graph_id={graph_id} setExec={setExec} exec={exec}/>}
         </section>
     )
 }
 
-export function Analyzer() {
+export function Analyzer({graph, setPage} : any) {
+
+    const [exec, setExec] = useState(false);
 
     return (
         <div className='analyzer'>
-            <SectionGraph />
-            <SectionDesk />
+            <button onClick={()=> setPage(1)}>regresar</button>
+            <SectionGraph exec={exec} user_id={graph.user_id} graph_id={graph} />
+            <SectionDesk setExec={setExec} exec={exec} user_id={1} graph_id={graph} />
         </div>
 
     )
