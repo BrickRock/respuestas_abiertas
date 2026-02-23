@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import './analyzer.css'
 import { ROUTES } from '../../routes.ts'
 //import React, { useCallback, useRef } from 'react';
@@ -8,6 +8,7 @@ import {
     useNodesState,
     useEdgesState,
     addEdge,
+    Background,
     useReactFlow,
     ReactFlowProvider,
     BaseEdge,
@@ -47,7 +48,6 @@ function DisplayData({ data, user_id, graph_id, setOptions, setTarget, setCompon
             setOptions(result.data); //update the options to make de cut
             setTarget({ data: target_data, id: target_id }) //update de values selected by the user
             setComponent(2);//update component render
-            console.log("Opciones de corte:", result);
         } catch (error) {
             console.error("Error fetching opc_cut:", error);
         }
@@ -118,7 +118,6 @@ const ButtonNewSampleRandom: any = ({ setQuery, query }: { setQuery: any, query:
     return (
         <button onClick={(e) => {
             setQuery(!query);
-            console.log(query);
 
         }}>
 
@@ -150,7 +149,6 @@ function DisplaySample({ setOptions, setTarget, setComponent, initialTypeSample 
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
                 let dataJson = await response.json();
-                console.log(dataJson)
                 setSampleData(dataJson.data);
                 // Assuming the API returns total items for pagination, if not, we might need another endpoint or calculate it
                 // For now, let's assume the API returns a 'total' field in the response for paginated data
@@ -195,10 +193,6 @@ interface DisplayOptionsCutProps {
 }
 
 function DisplayOptionsCut({ dataTarget, dataTargetID, options, setComponent, user_id, graph_id }: DisplayOptionsCutProps) {
-    console.log("opc aqui");
-    console.log(dataTarget);
-    console.log(dataTargetID);
-    console.log(options);
 
     const handleSelectOption = async (min_similarity: number) => {
         const url = `${ROUTES.get_similarity}?user_id=${user_id}&graph_id=${graph_id}&target_id=${dataTargetID}&min_similarity=${min_similarity}&preanalized=1`;
@@ -297,6 +291,63 @@ const edgeTypes = {
     '5': CustomEdge5,
 };
 
+
+const ModalRightClickNode = ({ id, top, left, right, bottom, deleteNode, editNode, ...props }: any) => {
+    alert("me cacharon en la jugada")
+    return (
+        <div
+            style={{ top, left, right, bottom }}
+            className="context-menu"
+            {...props}
+        >
+            <p style={{ margin: '0.5em 1em', fontSize: '10px', color: '#999' }}>Nodo: {id}</p>
+            <button onClick={() => editNode(id)}>Editar</button>
+            <button onClick={() => deleteNode(id)}>Borrar</button>
+        </div>
+    );
+};
+
+const MenuRightClick = ({
+  id,
+  top,
+  left,
+  right,
+  bottom,
+  graph_id,
+  exec,
+  onPaneClick,
+  setExec,
+  ...props
+} : any )=> {
+    
+    const handlerDelete = async ()=> {
+        let data = await fetch(ROUTES.delete_node, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ node_id: id, user_id : 1, graph_id: graph_id}),
+        });
+        if (!data.ok) {
+            console.error("Failed to delete node in backend");
+        }
+        else{
+            onPaneClick();
+            setExec(!exec);
+        }
+    }
+ 
+
+ 
+  return (
+     <div
+      style={{ top, left, right, bottom }}
+      className="context-menu"
+      {...props}
+    >
+      <button onClick={handlerDelete}>delete</button>
+    </div>
+  );
+}
+
 function SectionGraph({ exec = false, graph_id }: any) {
     const relations = {
         1: { "type": "Se asocia con " },
@@ -309,8 +360,11 @@ function SectionGraph({ exec = false, graph_id }: any) {
     const [nodes, setNodes, onNodesChange] = useNodesState([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState([]);
     const [selectedRelationType, setSelectedRelationType] = useState('1');
+    const [menu, setMenu] = useState(null);
+    const [nodeDeleted, setNodeDeleted] = useState(false);
+    const ref = useRef<HTMLDivElement>(null);
     const user_id = "1";
-
+    
     const onConnect = useCallback(
         async (params: Connection) => {
             if (!params.source || !params.target) return;
@@ -386,10 +440,28 @@ function SectionGraph({ exec = false, graph_id }: any) {
         };
 
         getGraph();
-    }, [graph_id, setEdges, setNodes, exec]);
+    }, [graph_id, setEdges, setNodes, exec, nodeDeleted]);
+
+  
+    const onNodeContextMenu = useCallback((event,nodo)=>{
+        event.preventDefault();
+        const pane = ref.current.getBoundingClientRect(); 
+        console.log(nodo)
+         setMenu({
+            id: nodo.id,
+            top: event.clientY < pane.height - 100 && event.clientY,
+            left: event.clientX < pane.width - 100 && event.clientX,
+            right: event.clientX >= pane.width - 200 && pane.width - event.clientX,
+            bottom:
+              event.clientY >= pane.height - 200 && pane.height - event.clientY,
+            });
+    }
+    ,[setMenu]);
+
+      const onPaneClick = useCallback(() => setMenu(null), [setMenu]);
 
     return (
-        <div className='graph' style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <div className='graph' ref={ref} style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
             <div className="relation-selector" style={{ padding: '10px', background: '#f0f0f0', display: 'flex', gap: '10px' }}>
                 <span>Tipo de relación:</span>
                 {Object.entries(relations).map(([id, rel]) => (
@@ -405,16 +477,22 @@ function SectionGraph({ exec = false, graph_id }: any) {
                     </label>
                 ))}
             </div>
-            <div style={{ flex: 1 }}>
+            <div style={{ flex: 1, position: 'relative' }}>
                 <ReactFlow
                     nodes={nodes}
                     edges={edges}
                     onNodesChange={onNodesChange}
                     onEdgesChange={onEdgesChange}
                     onConnect={onConnect}
+                    ref={ref} 
                     edgeTypes={edgeTypes}
+                    onNodeContextMenu={onNodeContextMenu}
                     fitView
-                />
+                    onPaneClick={onPaneClick}
+                >
+                    {menu && <MenuRightClick {...menu} onPaneClick={onPaneClick} graph_id={graph_id} setExec={setNodeDeleted} exec={nodeDeleted}/>}
+                    <Background />
+                </ReactFlow>
             </div>
         </div>
     )
@@ -440,9 +518,26 @@ export function Analyzer({graph, setPage} : any) {
 
     const [exec, setExec] = useState(false);
 
+    const handlerClick = (e) => {
+        let getData = async ()=> {
+            let data = await fetch(`${ROUTES.dowload_csv}?user_id=1&graph_id=${graph}`);
+            let dataBlob = await data.blob();
+            let url = URL.createObjectURL(dataBlob)
+            let a = document.createElement('a');
+            a.href = url;
+            a.download = "resultado.csv";
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+        getData();
+    }
+
     return (
         <div className='analyzer'>
             <button onClick={()=> setPage(1)}>regresar</button>
+            <button onClick={handlerClick}>Exportar a CSV</button>
             <SectionGraph exec={exec} user_id={graph.user_id} graph_id={graph} />
             <SectionDesk setExec={setExec} exec={exec} user_id={1} graph_id={graph} />
         </div>

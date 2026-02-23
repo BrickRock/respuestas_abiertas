@@ -9,5 +9,7 @@ export const ROUTES = {
     get_graph : `${BASE}/get_full_graph`,
     add_edge: `${BASE}/add_edge`,
     get_graphs : `${BASE}/get_user_graphs`,
-    upload_csv: `${BASE}/new_analysis`
+    upload_csv: `${BASE}/new_analysis`,
+    dowload_csv: `${BASE}/get_categorized_data`,
+    delete_node: `${BASE}/delete_node`
 }

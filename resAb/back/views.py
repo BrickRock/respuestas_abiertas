@@ -559,3 +559,55 @@ def get_user_graphs(request: HttpRequest):
         return HttpResponseBadRequest("Usuario no encontrado")
     except Exception as e:
         return HttpResponse(f"Error inesperado: {e}", status=500)
+
+@csrf_exempt
+def delete_node(request: HttpRequest):
+    """
+    Endpoint para eliminar un nodo, su archivo parquet asociado y sus relaciones.
+    Recibe: user_id, graph_id, node_id.
+    """
+    if request.method not in ["POST", "DELETE"]:
+        return HttpResponseBadRequest("Método no permitido")
+
+    try:
+        if request.content_type == 'application/json':
+            body = json.loads(request.body)
+            user_id = body.get("user_id")
+            graph_id = body.get("graph_id")
+            node_id = body.get("node_id")
+        else: # Soporte para form-data
+            user_id = request.POST.get("user_id")
+            graph_id = request.POST.get("graph_id")
+            node_id = request.POST.get("node_id")
+
+        if not all([user_id, graph_id, node_id]):
+            return HttpResponseBadRequest("Faltan parámetros obligatorios: user_id, graph_id, node_id")
+
+        # Validar existencia de los objetos
+        user = users.objects.get(id=user_id)
+        graph = graphs.objects.get(id=graph_id, id_user=user)
+        node = nodes.objects.get(id=node_id, graph=graph)
+        
+        # 1. Eliminar archivo parquet de S3
+        node_parquet_path = f"{user_id}/{graph_id}/{node.node_name}.parquet"
+        try:
+            delete_parquet_s3(node_parquet_path)
+        except FileNotFoundError:
+            # Si el archivo no existe, no es un error fatal.
+            # Se podría loggear este evento.
+            print(f"Archivo no encontrado, continuando con la eliminación: {node_parquet_path}")
+            pass
+
+        # 2. Eliminar el nodo de la base de datos.
+        # Gracias al `on_delete=models.CASCADE` en el modelo `edge`,
+        # todas las aristas relacionadas con este nodo se eliminarán automáticamente.
+        node.delete()
+
+        return HttpResponse(status=204)
+
+    except (users.DoesNotExist, graphs.DoesNotExist, nodes.DoesNotExist):
+        return HttpResponseBadRequest("Usuario, grafo o nodo no encontrado")
+    except json.JSONDecodeError:
+        return HttpResponseBadRequest("Cuerpo de la solicitud JSON inválido")
+    except Exception as e:
+        return HttpResponse(f"Error inesperado: {e}", status=500)
