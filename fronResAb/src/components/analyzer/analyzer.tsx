@@ -36,21 +36,10 @@ interface Data {
 
 
 function DisplayData({ data, user_id, graph_id, setOptions, setTarget, setComponent, readOnly = false }: { data: Array<Data>, user_id: string, graph_id: string, setOptions: any, setTarget: any, setComponent: any, readOnly?: boolean }) {
-    const handleOpcCut = async (target_id: string, target_data: string) => {
+    const handleOpcCut = (target_id: string, target_data: string) => {
         if (readOnly) return;
-        const url = `${ROUTES.opc_cut}?user_id=${user_id}&graph_id=${graph_id}&target_id=${target_id}&n_opc=3&min_similarity=0.80`;
-        try {
-            const response = await fetch(url);
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            const result = await response.json();
-            setOptions(result.data); //update the options to make de cut
-            setTarget({ data: target_data, id: target_id }) //update de values selected by the user
-            setComponent(2);//update component render
-        } catch (error) {
-            console.error("Error fetching opc_cut:", error);
-        }
+        setTarget({ data: target_data, id: target_id });
+        setComponent(2);
     };
 
     return (
@@ -73,7 +62,7 @@ function ButtonTypeSample({ random, setRandom }: ButtonTypeSampleProps) {
     return (
         <div className='buttonSample'>
             <button onClick={() => setRandom(1)} className={random === 1 ? 'active' : ''}>Aleatoria</button>
-            <button onClick={() => setRandom(0)} className={random === 0 ? 'active' : ''}>Secuencial</button>
+            <button onClick={() => setRandom(0)} className={random === 0 ? 'active' : ''}>Orden</button>
         </div>
     )
 }
@@ -90,16 +79,16 @@ function ButtonNavigate({ page, pageSize, totalItems, setPage }: ButtonNavigateP
     const [valueUserPage, setValue] = useState(1);
 
     return (
-        <div>
+        <div className="navigation">
             <button onClick={() => {
                 setPage(prev => Math.max(1, prev - 1));
                 setValue(page - 1);
             }
-            } disabled={page === 1}>Atras</button>
-            <button onClick={() => { setPage(prev => Math.min(totalPages, prev + 1)); setValue(page + 1); }} disabled={page === totalPages}>Siguiente</button>
+            } disabled={page === 1}>&lt;</button>
+            <button onClick={() => { setPage(prev => Math.min(totalPages, prev + 1)); setValue(page + 1); }} disabled={page === totalPages}>&gt;</button>
             <p>
-                <input type="text" value={valueUserPage} onChange={(e) => {
-                    setValue(e.target.value);
+                <input type="text" value={valueUserPage} style={{width: '30px', textAlign: 'center'}} onChange={(e) => {
+                    setValue(parseInt(e.target.value) || 0);
                     setTimeout(() => {
                         const newPage = parseInt(e.target.value);
                         if (!isNaN(newPage) && newPage >= 1 && newPage <= totalPages) {
@@ -108,7 +97,7 @@ function ButtonNavigate({ page, pageSize, totalItems, setPage }: ButtonNavigateP
                         }
                     }, 500)
 
-                }} /> - {totalPages}
+                }} /> / {totalPages}
             </p>
         </div>
     )
@@ -171,52 +160,106 @@ function DisplaySample({ setOptions, setTarget, setComponent, initialTypeSample 
     }
     return (
         <div className='Sample'>
-            <h1>{typeSample === 2 ? "Datos actuales en revisión" : "Selecciona un dato"}</h1>
+            {typeSample !== 2 && <h1>Selecciona un dato</h1>}
             <ButtonTypeSample random={random} setRandom={setRandom} />
             <DisplayData data={sampleData} user_id={user_id} graph_id={graph_id} setOptions={setOptions} setTarget={setTarget} setComponent={setComponent} readOnly={readOnly} />
             {random === 0 && ( // Only show navigation buttons if in paginated mode
                 <ButtonNavigate page={page} pageSize={sampleSize} totalItems={totalItems} setPage={setPage} />
             )}
             {random === 1 && (<ButtonNewSampleRandom setQuery={setQuery} query={query} />)}
-            {typeSample === 2 && <div><button onClick={e => setComponent(2)}>volver</button><button onClick={e => setComponent(4)}>Siguiente</button></div>}
+            {typeSample === 2 && (
+                <div style={{marginTop: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px'}}>
+                    <div style={{display: 'flex', gap: '10px'}}>
+                        <button onClick={e => setComponent(1)}>volver</button>
+                        <button onClick={e => setComponent(4)}>Siguiente</button>
+                    </div>
+                    <p className='total-count'>cantidad de respuestas: {totalItems}</p>
+                </div>
+            )}
         </div>
     )
 }
 
-interface DisplayOptionsCutProps {
-    dataTarget: string;
-    dataTargetID: number | string;
-    options: Array<{ id: number | string; data: string; sim: number }>;
-    setComponent: any;
-    user_id: string;
-    graph_id: string;
-}
+function ReviewManager({ user_id, graph_id, target, setComponent }: any) {
+    const [loading, setLoading] = useState(false);
+    const [similarity, setSimilarity] = useState(0.8);
+    const [showSample, setShowSample] = useState(false);
+    const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-function DisplayOptionsCut({ dataTarget, dataTargetID, options, setComponent, user_id, graph_id }: DisplayOptionsCutProps) {
-
-    const handleSelectOption = async (min_similarity: number) => {
-        const url = `${ROUTES.get_similarity}?user_id=${user_id}&graph_id=${graph_id}&target_id=${dataTargetID}&min_similarity=${min_similarity}&preanalized=1`;
-        try {
-            const response = await fetch(url);
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+    useEffect(() => {
+        const preAnalysis = async () => {
+            const url = `${ROUTES.opc_cut}?user_id=${user_id}&graph_id=${graph_id}&target_id=${target.id}&n_opc=3&min_similarity=0.6`;
+            try {
+                await fetch(url);
+            } catch (error) {
+                console.error("Error in pre-analysis:", error);
             }
-            setComponent(3);
-        } catch (error) {
-            console.error("Error fetching similarity:", error);
+        };
+        preAnalysis();
+    }, [user_id, graph_id, target.id]);
+
+    const handleSimilarityChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const newSim = parseFloat(e.target.value);
+        setSimilarity(newSim);
+        setLoading(true);
+        setShowSample(false);
+
+        if (timerRef.current) {
+            clearTimeout(timerRef.current);
         }
+
+        timerRef.current = setTimeout(async () => {
+            const simUrl = `${ROUTES.get_similarity}?user_id=${user_id}&graph_id=${graph_id}&target_id=${target.id}&min_similarity=${newSim}&preanalized=1`;
+            try {
+                const response = await fetch(simUrl);
+                if (response.ok) {
+                    setShowSample(true);
+                }
+            } catch (error) {
+                console.error("Error getting similarity:", error);
+            } finally {
+                setLoading(false);
+            }
+        }, 1000);
     };
 
     return (
-        <div className='options'>
-            <p className='options__target' key={dataTargetID}>{dataTarget}</p>
-            {options && options.sort((a, b) => b.sim - a.sim).map(
-                e => (<div key={e.id} className='options__opt-container' onClick={() => handleSelectOption(e.sim)}>
-                    <p >{e.data}</p><p>{e.sim}</p>
+        <div className="review-manager">
+            <button className="create-category-btn" onClick={() => setComponent(4)}>Crear categoria</button>
+            <div className="review-layout">
+                <div className="slider-container">
+                    <input
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.01"
+                        value={similarity}
+                        onChange={handleSimilarityChange}
+                        className="vertical-slider"
+                    />
                 </div>
-                ))}
+                <div className="display-area">
+                    {loading ? (
+                        <div className="loader-container">
+                            <div className="loader"></div>
+                        </div>
+                    ) : (
+                        showSample ? (
+                            <DisplaySample 
+                                graph_id={graph_id} 
+                                initialTypeSample={2} 
+                                setComponent={setComponent}
+                                setOptions={() => {}}
+                                setTarget={() => {}}
+                            />
+                        ) : (
+                            <p style={{marginTop: '50px'}}>Mueve el switch para iniciar el análisis</p>
+                        )
+                    )}
+                </div>
+            </div>
         </div>
-    )
+    );
 }
 
 interface ConfirmCategoryProps {
@@ -255,7 +298,7 @@ export function ConfirmCategory({ user_id, graph_id, setComponent, setExec, exec
                 placeholder="Nombre de la categoría"
             />
             <div>
-                <button onClick={() => setComponent(3)}>Atras</button>
+                <button onClick={() => setComponent(2)}>Atras</button>
                 <button onClick={handleConfirm}>Confirmar</button>
             </div>
         </div>
@@ -500,15 +543,14 @@ function SectionGraph({ exec = false, graph_id }: any) {
 
 
 function SectionDesk({exec, setExec, user_id, graph_id} : any) {
-    const [currentComponent, setCurrentComponent] = useState(1); // 1 - show data to select /2 - Show options to cut / 3- Show sample of data select / 4- Show confirm
+    const [currentComponent, setCurrentComponent] = useState(1); // 1 - show data to select / 2 - Show review manager / 4 - Show confirm
     const [optionsCut, setOptionsCut] = useState<Array<{ id: number | string, data: string, sim: number }>>([])
     const [target, setTarget] = useState<{ data: string, id: number | string }>();
-    //if(currentComponent === 1) setExec(!exec);
+    
     return (
         <section className='desk'>
             {currentComponent === 1 && <DisplaySample setOptions={setOptionsCut} setComponent={setCurrentComponent} setTarget={setTarget} graph_id={graph_id} />}
-            {currentComponent === 2 && target && <DisplayOptionsCut dataTarget={target.data} dataTargetID={target.id} options={optionsCut} setComponent={setCurrentComponent} user_id={user_id} graph_id={graph_id} />}
-            {currentComponent === 3 && <DisplaySample setOptions={setOptionsCut} setComponent={setCurrentComponent} setTarget={setTarget} initialTypeSample={2}  graph_id={graph_id} />}
+            {currentComponent === 2 && target && <ReviewManager user_id={user_id} graph_id={graph_id} target={target} setComponent={setCurrentComponent} />}
             {currentComponent === 4 && <ConfirmCategory setComponent={setCurrentComponent} user_id={user_id} graph_id={graph_id} setExec={setExec} exec={exec}/>}
         </section>
     )

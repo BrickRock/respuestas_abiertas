@@ -57,6 +57,7 @@ def get_similar_embeddings(target_embedding : np.ndarray, embeddings_df : pd.Dat
     target_norm = np.linalg.norm(target_embedding)
     embeddings_norms = np.linalg.norm(embeddings_matrix, axis=1)
     cosine_similarities = dot_products / (embeddings_norms * target_norm)
+    #sim_cos = dot_product / ||a||*||b||
     mask = cosine_similarities >= min_similarity
     result_df = embeddings_df[mask].copy()
     result_df['similarity'] = cosine_similarities[mask]
