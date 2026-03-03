@@ -55,7 +55,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const headers = new Headers(options.headers);
         headers.set('Authorization', `Bearer ${token}`);
         const res = await fetch(url, { ...options, headers });
-        if (res.status === 401) {
+        if (res.status === 401 || res.status === 403) {
             logout();
             throw new Error('Sesión expirada. Por favor inicia sesión de nuevo.');
         }

@@ -72,11 +72,12 @@ function Pagination({
     setPage: any;
 }) {
     const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
-    const [inputVal, setInputVal] = useState(String(page));
-
+    const [inputVal, setInputVal] = useState(page);
     return (
         <div className="pagination">
-            <button onClick={() => setPage((p: number) => Math.max(1, p - 1))} disabled={page === 1}>&lt;</button>
+            <button onClick={() => setPage((p: number) => {
+                setInputVal( Math.max(1, p - 1));
+                return Math.max(1, p - 1);})} disabled={page === 1}>&lt;</button>
             <div className="pagination-info">
                 <input
                     type="text"
@@ -91,7 +92,11 @@ function Pagination({
                 />
                 <span>/ {totalPages}</span>
             </div>
-            <button onClick={() => setPage((p: number) => Math.min(totalPages, p + 1))} disabled={page === totalPages}>&gt;</button>
+            <button onClick={(e) => {setPage((p: number) => {
+                setInputVal(Math.min(totalPages, p + 1));
+
+                return Math.min(totalPages, p + 1)});
+            }} disabled={page === totalPages}>&gt;</button>
         </div>
     );
 }
@@ -121,10 +126,10 @@ function DisplaySample({
     const [sampleData, setSampleData] = useState<Data[]>([]);
     const [random, setRandom] = useState(1);
     const [typeSample] = useState(initialTypeSample);
-    const [sampleSize] = useState(10);
     const [category] = useState(categoryProp);
     const [page, setPage] = useState(1);
-    const [pageSize] = useState(10);
+    const [sampleSize] = useState(5);// Estos 2 deberian ser uno
+    const [pageSize] = useState(5); // Estos 2 deberían ser uno
     const [totalItems, setTotalItems] = useState(0);
     const [query, setQuery] = useState(false);
 
@@ -172,11 +177,11 @@ function DisplaySample({
                 {random === 0 && (
                     <Pagination page={page} pageSize={sampleSize} totalItems={totalItems} setPage={setPage} />
                 )}
-                {typeSample === 2 && (
-                    <button className="btn-ghost" style={{ fontSize: 'var(--font-size-xs)' }} onClick={() => setComponent(1)}>
-                        ← Volver
-                    </button>
-                )}
+                {typeSample===2 &&
+                (<button className="btn-ghost" style={{ fontSize: 'var(--font-size-xs)' }} onClick={() => setComponent(1)}>
+                                ← Volver
+                            </button>)}
+                        
             </div>
         </>
     );
@@ -206,6 +211,7 @@ function ReviewManager({ graph_id, target, setComponent }: any) {
     const { authFetch } = useAuth();
     const [loading, setLoading] = useState(false);
     const [similarity, setSimilarity] = useState(0.8);
+    const [visibleSimilarity, setVisibleSimilarity] = useState(similarity);
     const [showSample, setShowSample] = useState(false);
     const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -250,22 +256,25 @@ function ReviewManager({ graph_id, target, setComponent }: any) {
                         type="range"
                         min="0"
                         max="1"
-                        step="0.01"
+                        step="0.001"
                         value={similarity}
-                        onChange={e => handleSimilarityChange(parseFloat(e.target.value))}
+                        onChange={e => {handleSimilarityChange(parseFloat(e.target.value));
+                            setVisibleSimilarity(parseFloat(e.target.value).toFixed(2));
+                        }}
                         className="vertical-slider"
                     />
-                    <span className="similarity-label">{similarity.toFixed(2)}</span>
+                    {/*<span className="similarity-label">{similarity.toFixed(3)}</span> */}
                     <input
-                        type="number"
-                        min="0"
-                        max="1"
-                        step="0.01"
-                        value={similarity}
+                        type="text"
+                        value={visibleSimilarity}
                         className="similarity-input"
+                        
                         onChange={e => {
                             const v = parseFloat(e.target.value);
-                            if (!isNaN(v) && v >= 0 && v <= 1) handleSimilarityChange(v);
+                            setVisibleSimilarity(e.target.value);
+
+                            if (!isNaN(v) && v >= 0 && v <= 1) {handleSimilarityChange(v);
+                            }
                         }}
                     />
                 </div>
@@ -287,9 +296,16 @@ function ReviewManager({ graph_id, target, setComponent }: any) {
                                 setTarget={() => {}}
                             />
                         ) : (
-                            <div className="review-placeholder">
-                                Mueve el deslizador para ver resultados similares
+                            <div>
+                                    <div className="review-placeholder">
+                                        Mueve el deslizador para ver resultados similares
+                                    </div>
+                            
+                                    <button className="btn-ghost" style={{ fontSize: 'var(--font-size-xs)' }} onClick={() => setComponent(1)}>
+                                        ← Volver
+                                    </button>
                             </div>
+                          
                         )}
                     </div>
                 </div>
@@ -626,10 +642,11 @@ export function Analyzer({ graph, setPage }: any) {
     };
 
     return (
-        <div>
+        <div className='contenedor-analyzer'>
             {/* Analyzer sub-toolbar */}
             <div style={{
                 display: 'flex',
+                flex : '1',
                 alignItems: 'center',
                 gap: 'var(--space-3)',
                 padding: 'var(--space-2) var(--space-4)',

@@ -2,28 +2,33 @@
 
 .analyzer {
   display: flex;
-  width: 100vw;
-  height: calc(100vh - 52px);
+  flex: 19;
   overflow: hidden;
   background-color: var(--color-bg);
 }
 
 .graph {
-  flex: 1;
   display: flex;
   flex-direction: column;
   position: relative;
   min-width: 0;
+  flex: 7;
 }
 
 .desk {
-  width: 340px;
+  flex: 3;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   border-left: 1px solid var(--color-border);
   background-color: var(--color-surface);
   overflow: hidden;
+}
+
+.contenedor-analyzer{
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 /* ─── Relation Selector ──────────────────────────────────────────────────────── */
@@ -196,6 +201,7 @@
   padding: 0;
   border: none;
   box-shadow: none;
+  background-color: black;
 }
 
 .vertical-slider:focus {
@@ -212,7 +218,7 @@
 }
 
 .similarity-input {
-  width: 52px;
+  width: auto;
   padding: var(--space-1) var(--space-2);
   text-align: center;
   font-size: var(--font-size-xs);

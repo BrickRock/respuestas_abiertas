@@ -156,6 +156,7 @@ interface ListGraphsProps {
 export const ListGraphs = ({ setPage, setGraph }: ListGraphsProps) => {
     const { authFetch } = useAuth();
     const [graphs, setGraphs] = useState<Graph[]>([]);
+    const [deletingId, setDeletingId] = useState<string | number | null>(null);
 
     useEffect(() => {
         const getGraphs = async () => {
@@ -173,6 +174,21 @@ export const ListGraphs = ({ setPage, setGraph }: ListGraphsProps) => {
     const handleOpen = (id: string | number) => {
         setGraph(id);
         setPage(2);
+    };
+
+    const handleDelete = async (e: React.MouseEvent, id: string | number) => {
+        e.stopPropagation();
+        setDeletingId(id);
+        try {
+            await authFetch(ROUTES.delete_graph, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ graph_id: id }),
+            });
+            setGraphs(prev => prev.filter(g => g.id !== id));
+        } finally {
+            setDeletingId(null);
+        }
     };
 
     return (
@@ -212,6 +228,14 @@ export const ListGraphs = ({ setPage, setGraph }: ListGraphsProps) => {
                                     <div className="graph-card-name">{graph.name}</div>
                                 </div>
                                 <div className="graph-card-footer">
+                                    <button
+                                        className="btn-danger-ghost graph-card-delete-btn"
+                                        onClick={(e) => handleDelete(e, graph.id)}
+                                        disabled={deletingId === graph.id}
+                                        title="Eliminar análisis"
+                                    >
+                                        {deletingId === graph.id ? '…' : '🗑'}
+                                    </button>
                                     <button className="btn-primary graph-card-btn">
                                         Abrir →
                                     </button>

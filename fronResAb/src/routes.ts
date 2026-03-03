@@ -13,5 +13,6 @@ export const ROUTES = {
     upload_csv: `${BASE}/new_analysis`,
     dowload_csv: `${BASE}/get_categorized_data`,
     delete_node: `${BASE}/delete_node`,
-    delete_edge: `${BASE}/delete_edge`
+    delete_edge: `${BASE}/delete_edge`,
+    delete_graph: `${BASE}/delete_graph`
 }

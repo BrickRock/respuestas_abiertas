@@ -520,6 +520,30 @@ def delete_node(request):
 
 
 @api_view(['POST', 'DELETE'])
+def delete_graph(request):
+    """Eliminar un grafo, sus datos en S3 y sus registros en BD."""
+    graph_id = request.data.get("graph_id")
+    if not graph_id:
+        return Response("graph_id es requerido", status=400)
+
+    user = request.user
+    try:
+        graph = graphs.objects.get(id=graph_id, id_user=user)
+    except graphs.DoesNotExist:
+        return Response("Grafo no encontrado o no pertenece al usuario", status=400)
+
+    s3_path = f"{BUCKET}/{user.pk}/{graph_id}"
+    try:
+        if fs.exists(s3_path):
+            fs.rm(s3_path, recursive=True)
+    except Exception as e:
+        print(f"Warning: error eliminando S3 path {s3_path}: {e}")
+
+    graph.delete()  # cascade elimina nodos → aristas
+    return HttpResponse(status=204)
+
+
+@api_view(['POST', 'DELETE'])
 def delete_edge(request):
     """Eliminar una arista."""
     try:

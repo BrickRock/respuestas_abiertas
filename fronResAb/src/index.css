@@ -179,7 +179,6 @@ label {
 input[type="range"] {
   appearance: none;
   -webkit-appearance: none;
-  background: transparent;
   cursor: pointer;
   padding: 0;
   border: none;

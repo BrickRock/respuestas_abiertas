@@ -32,5 +32,6 @@ urlpatterns = [
     path('add_edge', views.add_edge),#add_edge
     path('get_user_graphs', views.get_user_graphs),
     path('delete_node', views.delete_node),
-    path('delete_edge', views.delete_edge)
+    path('delete_edge', views.delete_edge),
+    path('delete_graph', views.delete_graph)
 ]
