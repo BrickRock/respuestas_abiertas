@@ -30,3 +30,4 @@ dist-ssr
 gha-creds-*.json
 .github
 
+staticfiles/

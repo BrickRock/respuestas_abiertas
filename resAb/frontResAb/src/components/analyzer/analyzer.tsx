@@ -427,6 +427,14 @@ const RELATIONS: Record<number, string> = {
     5: 'Es un',
 };
 
+const RELATION_COLORS: Record<number, string> = {
+    1: '#3b82f6',
+    2: '#10b981',
+    3: '#ef4444',
+    4: '#f59e0b',
+    5: '#8b5cf6',
+};
+
 function SectionGraph({ exec = false, graph_id }: any) {
     const { authFetch } = useAuth();
     const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
@@ -527,18 +535,16 @@ function SectionGraph({ exec = false, graph_id }: any) {
         <div className="graph" ref={ref}>
             {/* Relation selector bar */}
             <div className="relation-selector">
-                <span>Tipo de relación:</span>
                 {Object.entries(RELATIONS).map(([id, label]) => (
-                    <label key={id}>
-                        <input
-                            type="radio"
-                            name="relationType"
-                            value={id}
-                            checked={selectedRelation === id}
-                            onChange={e => setSelectedRelation(e.target.value)}
-                        />
+                    <button
+                        key={id}
+                        className={`relation-option${selectedRelation === id ? ' relation-option--active' : ''}`}
+                        onClick={() => setSelectedRelation(id)}
+                        style={{ '--relation-color': RELATION_COLORS[Number(id)] } as any}
+                    >
+                        <span className="relation-color-line" />
                         {label}
-                    </label>
+                    </button>
                 ))}
             </div>
 

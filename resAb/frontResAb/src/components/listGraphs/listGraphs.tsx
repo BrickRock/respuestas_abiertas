@@ -19,7 +19,7 @@ interface UploadCSVProps {
 const UploadCSV = ({ setPage, setGraph }: UploadCSVProps) => {
     const { authFetch } = useAuth();
     const [columns, setColumns] = useState<string[]>([]);
-    const [isColumnIndex, setIsColumnIndex] = useState(false);
+    const [isColumnIndex] = useState(false);
     const [csvFile, setCsvFile] = useState<File | null>(null);
     const [columnsSelected, setColumnsSelected] = useState('');
     const [nameAnalysis, setNameAnalysis] = useState('');
