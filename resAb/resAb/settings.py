@@ -23,12 +23,12 @@ load_dotenv()
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-yz!%5uv8cs#^tvv*f1l#o2d#slrg6^*89t$ib(&_b7k9m05wvy'
+SECRET_KEY = os.getenv('DJANGO_SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.getenv('DEBUG','False') == 'True' 
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS','').split(',')
 
 
 # Application definition
@@ -147,3 +147,12 @@ SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(hours=8),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
 }
+if not DEBUG:
+    SECURE_SSL_REDIRECT = True          # Redirige HTTP → HTTPS
+    SECURE_HSTS_SECONDS = 31536000      # HSTS por 1 año
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    
+    # Cookies seguras
+    SESSION_COOKIE_SECURE = True        # Cookie de sesión solo por HTTPS
+    CSRF_COOKIE_SECURE = True           # Cookie CSRF solo por HTTPS
