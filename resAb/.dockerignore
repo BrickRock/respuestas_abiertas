@@ -1,0 +1,9 @@
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/node_modules
+frontResAb/dist
+staticfiles
+.env
+*.md
+test_parquet.py
