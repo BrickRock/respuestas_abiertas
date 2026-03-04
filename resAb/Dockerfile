@@ -12,7 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # npm deps (capa cacheada mientras package.json no cambie)
 COPY frontResAb/package*.json frontResAb/
-RUN npm --prefix frontResAb ci
+RUN npm --prefix frontResAb install
 
 # Código fuente completo
 COPY . .
