@@ -15,12 +15,25 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
-from back_resAb import views
 from django.urls import path
+from django.views.generic import TemplateView
+from back import views
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('new_tree/', views.new_tree, name="new_tree"),
-    path('new_branches/', views.new_branches, name="new_branches"),
-    path('prune_tree/', views.prune_tree, name="prune_tree"),
+    path('login', views.login_view),
+    path('new_analysis', views.new_analysis_request),
+    path('get_similarity', views.search_similar),
+    path('opc_cut', views.opc_cut),
+    path('new_category', views.confirm_new_category),
+    path('sample', views.sample),
+    path('delete_tmp', views.delete_temp_embedding_endpoint),
+    path('get_categorized_data', views.get_categorized_data),
+    path('get_full_graph', views.get_full_graph),
+    path('add_edge', views.add_edge),#add_edge
+    path('get_user_graphs', views.get_user_graphs),
+    path('delete_node', views.delete_node),
+    path('delete_edge', views.delete_edge),
+    path('delete_graph', views.delete_graph),
+    path('', TemplateView.as_view(template_name='index.html'))
 ]

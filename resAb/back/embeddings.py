@@ -1,11 +1,8 @@
 from openai import OpenAI
 from dotenv import load_dotenv
 import pandas as pd
+import numpy as np
 import os
-from sklearn.preprocessing import normalize
-from sklearn.decomposition import PCA
-from sklearn.cluster import KMeans
-import matplotlib.pyplot as plt
 
 
 load_dotenv() #carga variables de entorno definidas en el archivo .env
@@ -35,12 +32,15 @@ def get_embeddings_main(dataframe_csv : pd.DataFrame, text_column, ID_column = N
     list_text = dataframe_csv[text_column].tolist()
     if not list_text:
         raise ValueError("Lista vacia")
+    embeddings_list = get_embeddings_batch(list_text)
     try:
-        dataframe_output = pd.DataFrame(get_embeddings_batch(list_text))
+        dataframe_output = pd.DataFrame({
+            'embedding': [np.array(emb, dtype=np.float32) for emb in embeddings_list]
+        })
     except:
         raise RuntimeError("Error al generar los embeddings")
-    if ID_column:
-        dataframe_output[ID_column] = dataframe_csv[ID_column].values
+    if ID_column: #necesitamos forzar a que sean todo texto
+        dataframe_output[ID_column] = dataframe_csv[ID_column].astype(str)
     else:
-        dataframe_output["ID"] =  range(len(list_text))
+        dataframe_output["ID"] = [str(i) for i in range(len(list_text))]
     return dataframe_output

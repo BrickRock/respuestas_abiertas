@@ -1,0 +1,327 @@
+/* ─── Analyzer Layout ────────────────────────────────────────────────────────── */
+
+.analyzer {
+  display: flex;
+  flex: 19;
+  overflow: hidden;
+  background-color: var(--color-bg);
+}
+
+.graph {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  min-width: 0;
+  flex: 7;
+}
+
+.desk {
+  flex: 3;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--color-border);
+  background-color: var(--color-surface);
+  overflow: hidden;
+}
+
+.contenedor-analyzer{
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ─── Relation Selector ──────────────────────────────────────────────────────── */
+
+.relation-selector {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  background-color: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.relation-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-normal);
+  transition: border-color 0.12s ease, background-color 0.12s ease, color 0.12s ease;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.relation-option:hover {
+  border-color: var(--relation-color);
+  color: var(--color-text);
+  background: transparent;
+  transform: none;
+  box-shadow: none;
+}
+
+.relation-option--active {
+  border-color: var(--relation-color);
+  border-width: 2px;
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+  background-color: color-mix(in srgb, var(--relation-color) 12%, transparent);
+  box-shadow: none;
+  transform: none;
+}
+
+.relation-option--active:hover {
+  background-color: color-mix(in srgb, var(--relation-color) 18%, transparent);
+}
+
+.relation-color-line {
+  display: inline-block;
+  width: 18px;
+  height: 3px;
+  border-radius: 2px;
+  background-color: var(--relation-color);
+  flex-shrink: 0;
+}
+
+/* ─── Context Menu ───────────────────────────────────────────────────────────── */
+
+.context-menu {
+  position: absolute;
+  z-index: 300;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-1);
+  box-shadow: var(--shadow-lg);
+  min-width: 130px;
+}
+
+.context-menu button {
+  display: flex;
+  width: 100%;
+  border: none;
+  background: none;
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  border-radius: var(--radius-sm);
+  justify-content: flex-start;
+}
+
+.context-menu button:hover {
+  background-color: var(--color-surface-2);
+  border-color: transparent;
+  transform: none;
+  box-shadow: none;
+}
+
+.context-menu button.btn-danger {
+  color: var(--color-destructive);
+  border-color: transparent !important;
+  background: transparent !important;
+}
+
+.context-menu button.btn-danger:hover {
+  background-color: var(--color-destructive-muted) !important;
+}
+
+/* ─── Confirm Category ───────────────────────────────────────────────────────── */
+
+.confirm-category {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-6);
+  height: 100%;
+}
+
+.confirm-category h1 {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.confirm-category-actions {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: auto;
+}
+
+/* ─── Review Manager ─────────────────────────────────────────────────────────── */
+
+.review-manager {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.review-manager-top {
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.create-category-btn {
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  justify-content: center;
+}
+
+.review-layout {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* Vertical slider column */
+.slider-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5) var(--space-3);
+  gap: var(--space-3);
+  border-right: 1px solid var(--color-border);
+  width: 100px;
+  flex-shrink: 0;
+}
+
+.vertical-slider {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 4px;
+  height: 160px;
+  cursor: pointer;
+  -webkit-appearance: slider-vertical;
+  appearance: slider-vertical;
+  padding: 0;
+  border: none;
+  box-shadow: none;
+  background-color: black;
+}
+
+.vertical-slider:focus {
+  box-shadow: none;
+  border: none;
+}
+
+.similarity-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-primary);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.similarity-input {
+  width: auto;
+  padding: var(--space-1) var(--space-2);
+  text-align: center;
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  border-radius: var(--radius-sm);
+}
+
+/* Target text + results area */
+.review-center {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.review-target {
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.review-target-label {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: var(--space-2);
+}
+
+.review-target-text {
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  line-height: var(--line-height-relaxed);
+}
+
+.review-results {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.loader-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex: 1;
+  padding: var(--space-8);
+}
+
+.loader {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.review-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  padding: var(--space-8);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  text-align: center;
+  line-height: var(--line-height-relaxed);
+}
+
+/* ─── ReactFlow Overrides ────────────────────────────────────────────────────── */
+
+.react-flow__background {
+  background-color: var(--color-bg) !important;
+}
+
+.react-flow__node-default {
+  background-color: var(--color-surface) !important;
+  border: 1px solid var(--color-border) !important;
+  color: var(--color-text) !important;
+  border-radius: var(--radius-md) !important;
+  font-size: var(--font-size-sm) !important;
+  font-family: var(--font-sans) !important;
+  box-shadow: var(--shadow-sm) !important;
+}
+
+.react-flow__node-default.selected {
+  border-color: var(--color-primary) !important;
+  box-shadow: 0 0 0 2px var(--color-primary-muted) !important;
+}
