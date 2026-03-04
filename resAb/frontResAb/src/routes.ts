@@ -1,4 +1,4 @@
-const BASE = "http://localhost:8000"
+const BASE = ""
 export const ROUTES = {
     login: `${BASE}/login`,
     sample : `${BASE}/sample`,
