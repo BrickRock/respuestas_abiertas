@@ -15,6 +15,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 # S3 helpers
 # ---------------------------------------------------------------------------
 BUCKET = "user-graphs"
+COLUMN_FREE_REGISTER = 'selected'
 fs = s3fs.S3FileSystem(
     key=os.getenv("AWS_ACCESS_KEY_ID"),
     secret=os.getenv("AWS_SECRET_ACCESS_KEY"),
@@ -146,6 +147,7 @@ def new_analysis_request(request):
         data['ID'] = [str(i) for i in range(data.shape[0])]
     embedding = get_embeddings_main(data, text_column=text_column, ID_column=id_column)  # type: ignore
     embedding['block'] = [str(0) for i in range(data.shape[0])]#añadimos nueva columna que indica cuales registros no se pueden utiliza con un 1
+    embedding[COLUMN_FREE_REGISTER] = [str(0) for i in range(data.shape[0])]#añadimos nueva columna que indica cuales registros pertenecen a al menos una categoria
     save_or_update_tree_s3(f"{BASE_PATH}/data.parquet", data=data) #almacena el csv original sin ninguna modificacion
     save_or_update_tree_s3(f"{BASE_PATH}/embedding.parquet", data=embedding) #almacena un archivo paralelo que conteine el embedding y su ID
     graph.file_data_path = f"{BASE_PATH}/data.parquet"
@@ -252,6 +254,7 @@ def confirm_new_category(request):
         df_global = read_tree_s3(f"{BASE_PATH_USER}/embedding.parquet")
         ids_bloc = df_current[graph.id_column].values
         df_global.loc[df_global[graph.id_column].isin(ids_bloc), 'block'] = '1'
+        df_global[COLUMN_FREE_REGISTER] = '1'
         save_or_update_tree_s3(f"{BASE_PATH_USER}/embedding.parquet", df_global)
     return HttpResponse(status=204)
 
@@ -545,6 +548,12 @@ def delete_node(request):
         node = nodes.objects.get(id=node_id, graph=graph)
 
         node_parquet_path = f"{user.pk}/{graph_id}/{node.node_name}.parquet"
+        df_delete = read_tree_s3(node_parquet_path)
+        df_global = read_tree_s3(f"{user.pk}/{graph_id}/embedding.parquet")
+        ids_for_delete = df_delete[graph.id_column].values
+        df_global.loc[df_global[graph.id_column].isin(ids_for_delete), COLUMN_FREE_REGISTER] = '0'
+        df_global.loc[df_global[graph.id_column].isin(ids_for_delete), 'block'] = '0'
+        save_or_update_tree_s3(f"{user.pk}/{graph_id}/embedding.parquet", df_global)
         try:
             delete_parquet_s3(node_parquet_path)
         except FileNotFoundError:

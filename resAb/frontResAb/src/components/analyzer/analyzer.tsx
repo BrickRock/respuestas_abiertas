@@ -111,6 +111,7 @@ interface DisplaySampleProps {
     categoryProp?: string;
     floating?: boolean;
     onClose?: () => void;
+    refreshTrigger?: boolean;
 }
 
 function DisplaySample({
@@ -121,6 +122,7 @@ function DisplaySample({
     categoryProp = '',
     floating = false,
     onClose,
+    refreshTrigger,
 }: DisplaySampleProps) {
     const { authFetch } = useAuth();
     const [sampleData, setSampleData] = useState<Data[]>([]);
@@ -149,7 +151,7 @@ function DisplaySample({
             }
         };
         fetchData();
-    }, [random, typeSample, sampleSize, category, page, pageSize, graph_id, query]);
+    }, [random, typeSample, sampleSize, category, page, pageSize, graph_id, query, refreshTrigger]);
 
     const readOnly = typeSample === 1 || typeSample === 2;
 
@@ -402,7 +404,7 @@ const edgeTypes = {
 const MenuRightClick = ({
     id, top, left, right, bottom,
     graph_id, exec, onPaneClick, setExec,
-    setData, category, setShowData,
+    setData, category, setShowData, onNodeDeleted,
     ...props
 }: any) => {
     const { authFetch } = useAuth();
@@ -413,7 +415,7 @@ const MenuRightClick = ({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ node_id: id, graph_id }),
         });
-        if (res.ok) { onPaneClick(); setExec(!exec); }
+        if (res.ok) { onPaneClick(); setExec(!exec); onNodeDeleted(); }
         else console.error('Failed to delete node');
     };
 
@@ -449,7 +451,7 @@ const RELATION_COLORS: Record<number, string> = {
     5: '#8b5cf6',
 };
 
-function SectionGraph({ exec = false, graph_id }: any) {
+function SectionGraph({ exec = false, graph_id, onNodeDeleted }: any) {
     const { authFetch } = useAuth();
     const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -585,6 +587,7 @@ function SectionGraph({ exec = false, graph_id }: any) {
                             exec={nodeDeleted}
                             setData={setCategory}
                             setShowData={setShowData}
+                            onNodeDeleted={onNodeDeleted}
                         />
                     )}
                     <Background />
@@ -607,7 +610,7 @@ function SectionGraph({ exec = false, graph_id }: any) {
 
 /* ─── Section Desk ───────────────────────────────────────────────────────────── */
 
-function SectionDesk({ exec, setExec, graph_id }: any) {
+function SectionDesk({ exec, setExec, graph_id, nodeDeleted }: any) {
     const [currentComponent, setCurrentComponent] = useState(1);
     const [target, setTarget] = useState<{ data: string; id: string | number }>();
 
@@ -618,6 +621,7 @@ function SectionDesk({ exec, setExec, graph_id }: any) {
                     setComponent={setCurrentComponent}
                     setTarget={setTarget}
                     graph_id={graph_id}
+                    refreshTrigger={nodeDeleted}
                 />
             )}
             {currentComponent === 2 && target && (
@@ -644,6 +648,7 @@ function SectionDesk({ exec, setExec, graph_id }: any) {
 export function Analyzer({ graph, setPage }: any) {
     const { authFetch } = useAuth();
     const [exec, setExec] = useState(false);
+    const [nodeDeleted, setNodeDeleted] = useState(false);
 
     const handleExport = () => {
         const download = async () => {
@@ -678,8 +683,8 @@ export function Analyzer({ graph, setPage }: any) {
             </div>
 
             <div className="analyzer">
-                <SectionGraph exec={exec} graph_id={graph} />
-                <SectionDesk setExec={setExec} exec={exec} graph_id={graph} />
+                <SectionGraph exec={exec} graph_id={graph} onNodeDeleted={() => setNodeDeleted(p => !p)} />
+                <SectionDesk setExec={setExec} exec={exec} graph_id={graph} nodeDeleted={nodeDeleted} />
             </div>
         </div>
     );
