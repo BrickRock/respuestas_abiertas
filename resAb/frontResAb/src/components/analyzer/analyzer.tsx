@@ -213,18 +213,23 @@ function ReviewManager({ graph_id, target, setComponent }: any) {
     const [similarity, setSimilarity] = useState(0.8);
     const [visibleSimilarity, setVisibleSimilarity] = useState<number | string>(similarity);
     const [showSample, setShowSample] = useState(false);
+    const [activateSample, setActivateSample] = useState(false);
     const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     useEffect(() => {
         const preAnalysis = async () => {
             const url = `${ROUTES.sim_cos}?graph_id=${graph_id}&target_id=${target.id}`;
-            try { await authFetch(url); }
+            try { 
+                let res = await authFetch(url); 
+                if(res.ok) setActivateSample(true);
+            }
             catch (e) { console.error('Pre-analysis error:', e); }
         };
         preAnalysis();
     }, [graph_id, target.id]);
 
     const handleSimilarityChange = (newSim: number) => {
+        if(!activateSample) return;
         setSimilarity(newSim);
         setLoading(true);
         setShowSample(false);
@@ -326,9 +331,10 @@ interface ConfirmCategoryProps {
 export function ConfirmCategory({ graph_id, setComponent, setExec, exec }: ConfirmCategoryProps) {
     const { authFetch } = useAuth();
     const [categoryName, setCategoryName] = useState('');
+    const [blockResponses, setBlockResponses] = useState(false);
 
     const handleConfirm = async () => {
-        const url = `${ROUTES.new_category}?graph_id=${graph_id}&name=${categoryName}`;
+        const url = `${ROUTES.new_category}?graph_id=${graph_id}&name=${categoryName}${blockResponses ? '&block=1' : ''}`;
         try {
             const res = await authFetch(url);
             if (res.ok) {
@@ -354,6 +360,14 @@ export function ConfirmCategory({ graph_id, setComponent, setExec, exec }: Confi
                     autoFocus
                 />
             </div>
+            <label className="confirm-category-block-label">
+                <input
+                    type="checkbox"
+                    checked={blockResponses}
+                    onChange={e => setBlockResponses(e.target.checked)}
+                />
+                ¿Desea restringir estas respuestas de futuras categorías?
+            </label>
             <div className="confirm-category-actions">
                 <button className="btn-ghost" onClick={() => setComponent(2)}>← Atrás</button>
                 <button

@@ -145,6 +145,7 @@ def new_analysis_request(request):
     if id_column is None:
         data['ID'] = [str(i) for i in range(data.shape[0])]
     embedding = get_embeddings_main(data, text_column=text_column, ID_column=id_column)  # type: ignore
+    embedding['block'] = [str(0) for i in range(data.shape[0])]#añadimos nueva columna que indica cuales registros no se pueden utiliza con un 1
     save_or_update_tree_s3(f"{BASE_PATH}/data.parquet", data=data) #almacena el csv original sin ninguna modificacion
     save_or_update_tree_s3(f"{BASE_PATH}/embedding.parquet", data=embedding) #almacena un archivo paralelo que conteine el embedding y su ID
     graph.file_data_path = f"{BASE_PATH}/data.parquet"
@@ -226,6 +227,7 @@ def confirm_new_category(request):
     try:
         graph_id = request.GET.get("graph_id")
         name_category = request.GET.get("name")
+        block = int(request.GET.get('block', 0))
     except Exception as e:
         return Response(f"Error en los datos proporcionados {e}", status=400)
 
@@ -237,13 +239,20 @@ def confirm_new_category(request):
 
     new_node = nodes(node_name=name_category, graph=graph)  # type: ignore
     BASE_PATH_USER = f"{user.pk}/{graph_id}"
+    #almacena en su propio archivo parquet la categoria recien creada
+    df_current =  read_tree_s3(f"{BASE_PATH_USER}/currentReview.parquet")
     save_or_update_tree_s3(
         f"{BASE_PATH_USER}/{name_category}.parquet",
-        read_tree_s3(f"{BASE_PATH_USER}/currentReview.parquet"),
+       df_current,
     )
     delete_parquet_s3(f"{BASE_PATH_USER}/currentReview.parquet")
     delete_parquet_s3(f"{BASE_PATH_USER}/temp_emb.parquet")
     new_node.save()
+    if block == 1:
+        df_global = read_tree_s3(f"{BASE_PATH_USER}/embedding.parquet")
+        ids_bloc = df_current[graph.id_column].values
+        df_global.loc[df_global[graph.id_column].isin(ids_bloc), 'block'] = '1'
+        save_or_update_tree_s3(f"{BASE_PATH_USER}/embedding.parquet", df_global)
     return HttpResponse(status=204)
 
 
@@ -272,6 +281,9 @@ def sample(request):
 
     if type_sample == 0:
         data = read_tree_s3(f"{BASE_PATH}/data.parquet")  # type: ignore
+        embedding_df = read_tree_s3(f"{BASE_PATH}/embedding.parquet")
+        unblocked_ids = embedding_df[embedding_df['block'] != '1'][graph.id_column]
+        data = data[data[graph.id_column].isin(unblocked_ids)]
         size = data.shape[0]
         if random_sample == 1:
             sample_size = sample_size if sample_size < size else size
@@ -332,6 +344,7 @@ def calculate_sim_cos(request):
         return Response("Grafo no encontrado", status=400)
     PATH_EMB = f"{user.pk}/{graph_id}/embedding.parquet"
     df_embedding: pd.DataFrame = read_tree_s3(PATH_EMB)
+    df_embedding = df_embedding[df_embedding['block']!='1']
     target_row = df_embedding[df_embedding[graph.id_column] == target_id].iloc[0]['embedding']
 
     #voy a obtener la similitud coseno de todos los datos
