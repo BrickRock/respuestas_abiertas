@@ -15,7 +15,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 # S3 helpers
 # ---------------------------------------------------------------------------
 BUCKET = "user-graphs"
-COLUMN_FREE_REGISTER = 'selected'
+COLUM_COUNT_OCURRENCE = 'selected'
 fs = s3fs.S3FileSystem(
     key=os.getenv("AWS_ACCESS_KEY_ID"),
     secret=os.getenv("AWS_SECRET_ACCESS_KEY"),
@@ -147,7 +147,7 @@ def new_analysis_request(request):
         data['ID'] = [str(i) for i in range(data.shape[0])]
     embedding = get_embeddings_main(data, text_column=text_column, ID_column=id_column)  # type: ignore
     embedding['block'] = [str(0) for i in range(data.shape[0])]#añadimos nueva columna que indica cuales registros no se pueden utiliza con un 1
-    embedding[COLUMN_FREE_REGISTER] = [str(0) for i in range(data.shape[0])]#añadimos nueva columna que indica cuales registros pertenecen a al menos una categoria
+    embedding[COLUM_COUNT_OCURRENCE] = [str(0) for i in range(data.shape[0])]#añadimos nueva columna que indica cuales registros pertenecen a al menos una categoria
     save_or_update_tree_s3(f"{BASE_PATH}/data.parquet", data=data) #almacena el csv original sin ninguna modificacion
     save_or_update_tree_s3(f"{BASE_PATH}/embedding.parquet", data=embedding) #almacena un archivo paralelo que conteine el embedding y su ID
     graph.file_data_path = f"{BASE_PATH}/data.parquet"
@@ -250,12 +250,14 @@ def confirm_new_category(request):
     delete_parquet_s3(f"{BASE_PATH_USER}/currentReview.parquet")
     delete_parquet_s3(f"{BASE_PATH_USER}/temp_emb.parquet")
     new_node.save()
+    df_global = read_tree_s3(f"{BASE_PATH_USER}/embedding.parquet")
+    ids_bloc = df_current[graph.id_column].values
+    mask = df_global[graph.id_column].isin(ids_bloc)
     if block == 1:
-        df_global = read_tree_s3(f"{BASE_PATH_USER}/embedding.parquet")
-        ids_bloc = df_current[graph.id_column].values
-        df_global.loc[df_global[graph.id_column].isin(ids_bloc), 'block'] = '1'
-        df_global[COLUMN_FREE_REGISTER] = '1'
-        save_or_update_tree_s3(f"{BASE_PATH_USER}/embedding.parquet", df_global)
+        df_global.loc[mask, 'block'] = '1'
+    df_global.loc[mask, COLUM_COUNT_OCURRENCE] =  pd.to_numeric(df_global.loc[mask, COLUM_COUNT_OCURRENCE]) + 1
+    print(df_global.head())
+    save_or_update_tree_s3(f"{BASE_PATH_USER}/embedding.parquet", df_global)
     return HttpResponse(status=204)
 
 
@@ -295,6 +297,11 @@ def sample(request):
         else:
             start_index = (page - 1) * page_size
             data_to_return = data.iloc[start_index:start_index + page_size]
+        data_to_return = data_to_return.merge(
+            embedding_df[[graph.id_column, COLUM_COUNT_OCURRENCE]],
+            on=graph.id_column, how='left'
+        )
+        data_to_return['inCategory'] = (pd.to_numeric(data_to_return[COLUM_COUNT_OCURRENCE], errors='coerce').fillna(0) > 0).astype(int)
 
     elif type_sample == 1:
         try:
@@ -315,6 +322,7 @@ def sample(request):
         except Exception:
             return Response("No hay categoria actual en revisión", status=400)
         size = data.shape[0]
+        embedding_df = read_tree_s3(f"{BASE_PATH}/embedding.parquet")
         if random_sample == 1:
             sample_size = sample_size if sample_size < size else size
             list_data_selected = select_n_random_values(sample_size, 0, size - 1)
@@ -322,8 +330,16 @@ def sample(request):
         else:
             start_index = (page - 1) * page_size
             data_to_return = data.iloc[start_index:start_index + page_size]
+        data_to_return = data_to_return.merge(
+            embedding_df[[graph.id_column, COLUM_COUNT_OCURRENCE]],
+            on=graph.id_column, how='left'
+        )
+        data_to_return['inCategory'] = (pd.to_numeric(data_to_return[COLUM_COUNT_OCURRENCE], errors='coerce').fillna(0) > 0).astype(int)
 
-    result = data_to_return[[graph.id_column, graph.text_column]].rename(
+    cols = [graph.id_column, graph.text_column]
+    if 'inCategory' in data_to_return.columns:
+        cols.append('inCategory')
+    result = data_to_return[cols].rename(
         columns={graph.id_column: 'id', graph.text_column: 'data'}
     )
     return Response({"data": result.to_dict("records"), "total_items": data.shape[0]})
@@ -551,8 +567,9 @@ def delete_node(request):
         df_delete = read_tree_s3(node_parquet_path)
         df_global = read_tree_s3(f"{user.pk}/{graph_id}/embedding.parquet")
         ids_for_delete = df_delete[graph.id_column].values
-        df_global.loc[df_global[graph.id_column].isin(ids_for_delete), COLUMN_FREE_REGISTER] = '0'
-        df_global.loc[df_global[graph.id_column].isin(ids_for_delete), 'block'] = '0'
+        mask = df_global[graph.id_column].isin(ids_for_delete)
+        df_global.loc[mask, COLUM_COUNT_OCURRENCE] = pd.to_numeric(df_global.loc[mask, COLUM_COUNT_OCURRENCE]) - 1
+        df_global.loc[mask, 'block'] = '0'
         save_or_update_tree_s3(f"{user.pk}/{graph_id}/embedding.parquet", df_global)
         try:
             delete_parquet_s3(node_parquet_path)

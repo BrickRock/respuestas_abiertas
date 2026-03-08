@@ -22,6 +22,7 @@ import '@xyflow/react/dist/style.css';
 interface Data {
     data: string;
     id: string;
+    inCategory?: number;
 }
 
 /* ─── Data Items ─────────────────────────────────────────────────────────────── */
@@ -48,7 +49,7 @@ function DisplayData({
             {data.map(el => (
                 <div
                     key={el.id}
-                    className={`sample-item${readOnly ? ' sample-item--readonly' : ''}`}
+                    className={`sample-item${readOnly ? ' sample-item--readonly' : ''}${el.inCategory === 1 ? ' sample-item--in-category' : ''}`}
                     onClick={() => handleSelect(el.id, el.data)}
                 >
                     {el.data}
@@ -143,6 +144,7 @@ function DisplaySample({
                 if (!response.ok) throw new Error(`HTTP error ${response.status}`);
                 const json = await response.json();
                 setSampleData(json.data);
+                console.log(json.data);
                 setTotalItems(json.total_items ?? json.data.length);
             } catch (err) {
                 console.error('Error fetching sample:', err);
