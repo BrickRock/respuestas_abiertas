@@ -23,6 +23,7 @@ export default defineConfig({
       '/create_relationship': 'http://localhost:8000',
       '/get_relations': 'http://localhost:8000',
       '/get_progress': 'http://localhost:8000',
+      '/update_node_position': 'http://localhost:8000',
     },
   },
 })

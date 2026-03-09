@@ -17,5 +17,7 @@ export const ROUTES = {
     delete_graph: `${BASE}/delete_graph`,
     get_progress: `${BASE}/get_progress`,
     create_relationship: `${BASE}/create_relationship`,
-    get_relations: `${BASE}/get_relations`
+    get_relations: `${BASE}/get_relations`,
+    update_node_position: `${BASE}/update_node_position`,
+    rename_category : `${BASE}/rename_category`,
 }

@@ -481,7 +481,7 @@ def get_full_graph(request):
         all_nodes = nodes.objects.filter(graph=graph_obj)
         edges_objs = edge.objects.filter(from_node__in=all_nodes).select_related('from_node', 'to_node', 'relation')
 
-        nodes_list = [{"id": n.id, "name": n.node_name} for n in all_nodes]
+        nodes_list = [{"id": n.id, "name": n.node_name, "pos_x": n.pos_x, "pos_y": n.pos_y} for n in all_nodes]
         edges_list = [
             {
                 "id":          e.id,
@@ -578,21 +578,24 @@ def delete_node(request):
         user = request.user
         graph = graphs.objects.get(id=graph_id, id_user=user)
         node = nodes.objects.get(id=node_id, graph=graph)
-
-        node_parquet_path = f"{user.pk}/{graph_id}/{node.node_name}.parquet"
-        df_delete = read_tree_s3(node_parquet_path)
-        df_global = read_tree_s3(f"{user.pk}/{graph_id}/embedding.parquet")
-        ids_for_delete = df_delete[graph.id_column].values
-        mask = df_global[graph.id_column].isin(ids_for_delete)
-        df_global.loc[mask, COLUM_COUNT_OCURRENCE] = pd.to_numeric(df_global.loc[mask, COLUM_COUNT_OCURRENCE]) - 1
-        df_global.loc[mask, 'block'] = '0'
-        save_or_update_tree_s3(f"{user.pk}/{graph_id}/embedding.parquet", df_global)
         try:
+            node_parquet_path = f"{user.pk}/{graph_id}/{node.node_name}.parquet"
+            df_delete = read_tree_s3(node_parquet_path)
             delete_parquet_s3(node_parquet_path)
+        except:
+            print(f"Archivo no encontrado, continuando: {node_parquet_path}")
+        node.delete()
+        try:
+            df_global = read_tree_s3(f"{user.pk}/{graph_id}/embedding.parquet")
+            ids_for_delete = df_delete[graph.id_column].values
+            mask = df_global[graph.id_column].isin(ids_for_delete)
+            df_global.loc[mask, COLUM_COUNT_OCURRENCE] = pd.to_numeric(df_global.loc[mask, COLUM_COUNT_OCURRENCE]) - 1
+            df_global.loc[mask, 'block'] = '0'
+            save_or_update_tree_s3(f"{user.pk}/{graph_id}/embedding.parquet", df_global)
+
         except FileNotFoundError:
             print(f"Archivo no encontrado, continuando: {node_parquet_path}")
 
-        node.delete()
         return HttpResponse(status=204)
 
     except (graphs.DoesNotExist, nodes.DoesNotExist):
@@ -694,6 +697,114 @@ def get_progress(request):
     assigned = (pd.to_numeric(df[COLUM_COUNT_OCURRENCE], errors='coerce').fillna(0) > 0).sum()
     progress = round(float(assigned / total * 100), 2)
     return Response({"progress": progress})
+
+
+@api_view(['POST'])
+def rename_category(request):
+    """Renombrar una categoría: actualiza el nodo en BD y mueve su parquet en S3."""
+    try:
+        graph_id = request.data.get('graph_id')
+        node_id  = request.data.get('node_id')
+        new_name = (request.data.get('new_name') or '').strip()
+    except Exception as e:
+        return Response(f"Error en los datos: {e}", status=400)
+
+    if not all([graph_id, node_id]):
+        return Response("graph_id y node_id son requeridos", status=400)
+    if not new_name:
+        return Response("new_name no puede estar vacío", status=400)
+    if any(c in new_name for c in ('/', '\\', '..', '\0')):
+        return Response("new_name contiene caracteres no permitidos", status=400)
+
+    user = request.user
+    try:
+        graph = graphs.objects.get(id=graph_id, id_user=user)
+    except graphs.DoesNotExist:
+        return Response("Grafo no encontrado o no pertenece al usuario", status=400)
+
+    try:
+        node = nodes.objects.get(id=node_id, graph=graph)
+    except nodes.DoesNotExist:
+        return Response("Nodo no encontrado en este grafo", status=400)
+
+    old_name = node.node_name
+
+    # No-op si el nombre es idéntico
+    if old_name == new_name:
+        return Response("OK", status=200)
+
+    # Verificar colisión con otro nodo del mismo grafo
+    if nodes.objects.filter(node_name=new_name, graph=graph).exists():
+        return Response("Ya existe una categoría con ese nombre en este grafo", status=400)
+
+    BASE_PATH   = f"{user.pk}/{graph_id}"
+    old_s3_path = f"{BASE_PATH}/{old_name}.parquet"
+    new_s3_path = f"{BASE_PATH}/{new_name}.parquet"
+
+    # --- Operación S3 (primero, para poder revertir si falla la BD) ---
+    s3_copy_done    = False
+    parquet_existed = fs.exists(f"{BUCKET}/{old_s3_path}")
+
+    try:
+        if parquet_existed:
+            df_category = read_tree_s3(old_s3_path)
+            save_or_update_tree_s3(new_s3_path, df_category)
+            s3_copy_done = True
+            delete_parquet_s3(old_s3_path)
+    except Exception as e:
+        # Revertir copia parcial si la copia llegó a completarse antes del delete
+        if s3_copy_done:
+            try:
+                delete_parquet_s3(new_s3_path)
+            except Exception:
+                pass
+        return Response(f"Error al mover el archivo en S3: {e}", status=500)
+
+    # --- Actualización en BD ---
+    try:
+        node.node_name = new_name
+        node.save(update_fields=['node_name'])
+    except Exception as e:
+        # Revertir S3: restaurar archivo original y borrar el nuevo
+        if parquet_existed:
+            try:
+                df_category = read_tree_s3(new_s3_path)
+                save_or_update_tree_s3(old_s3_path, df_category)
+                delete_parquet_s3(new_s3_path)
+            except Exception as revert_err:
+                print(f"CRITICAL: fallo al revertir S3 tras error en BD. "
+                      f"Parquet nuevo='{new_s3_path}' sin actualizar en BD. Revert error: {revert_err}")
+        return Response(f"Error al actualizar la base de datos: {e}", status=500)
+
+    return Response({"old_name": old_name, "new_name": new_name}, status=200)
+
+
+@api_view(['POST'])
+def update_node_position(request):
+    """Guardar la posición de un nodo en el canvas."""
+    try:
+        graph_id = request.data.get('graph_id')
+        node_id  = request.data.get('node_id')
+        pos_x    = float(request.data.get('pos_x'))
+        pos_y    = float(request.data.get('pos_y'))
+    except (TypeError, ValueError) as e:
+        return Response(f"Datos inválidos: {e}", status=400)
+
+    user = request.user
+    try:
+        graph_obj = graphs.objects.get(id=graph_id, id_user=user)
+    except graphs.DoesNotExist:
+        return Response("Grafo no encontrado", status=400)
+
+    try:
+        node_obj = nodes.objects.get(id=node_id, graph=graph_obj)
+    except nodes.DoesNotExist:
+        return Response("Nodo no encontrado en este grafo", status=400)
+
+    node_obj.pos_x = pos_x
+    node_obj.pos_y = pos_y
+    node_obj.save(update_fields=['pos_x', 'pos_y'])
+    return Response("OK", status=200)
 
 
 @api_view(['POST', 'DELETE'])

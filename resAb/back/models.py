@@ -26,7 +26,9 @@ class graphs(models.Model):
 
 class nodes(models.Model):
     node_name = models.CharField(max_length=255, null=False)
-    graph = models.ForeignKey(graphs, on_delete=models.CASCADE)
+    graph     = models.ForeignKey(graphs, on_delete=models.CASCADE)
+    pos_x     = models.FloatField(null=True, blank=True)
+    pos_y     = models.FloatField(null=True, blank=True)
 
 class relationship(models.Model):
     type         = models.CharField(max_length=255, null=False)

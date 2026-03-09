@@ -260,7 +260,7 @@ function ReviewManager({ graph_id, target, setComponent }: any) {
         <div className="review-manager">
             <div className="review-manager-top">
                 <button className="btn-primary create-category-btn" onClick={handleNewCategory}>
-                    {loading ?    <div className="loader-container"><div className="loader" /></div>: 'Crear categoría'}
+                    {loading ?    'Cargando': 'Crear categoría'}
                 </button>
             </div>
             <div className="review-layout">
@@ -391,6 +391,82 @@ export function ConfirmCategory({ graph_id, setComponent, setExec, exec }: Confi
     );
 }
 
+/* ─── Rename Modal ───────────────────────────────────────────────────────────── */
+
+function RenameModal({ currentName, graph_id, node_id, onClose, onRenamed }: {
+    currentName: string;
+    graph_id: any;
+    node_id: any;
+    onClose: () => void;
+    onRenamed: (newName: string) => void;
+}) {
+    const { authFetch } = useAuth();
+    const [newName, setNewName] = useState(currentName);
+    const [saving, setSaving]   = useState(false);
+    const [error, setError]     = useState('');
+
+    const handleSave = async () => {
+        const trimmed = newName.trim();
+        if (!trimmed) return;
+        setSaving(true);
+        setError('');
+        try {
+            const res = await authFetch(ROUTES.rename_category, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ graph_id, node_id, new_name: trimmed }),
+            });
+            if (res.ok) {
+                onRenamed(trimmed);
+                onClose();
+            } else {
+                const msg = await res.text();
+                setError(msg || 'Error al renombrar');
+            }
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter') handleSave();
+        if (e.key === 'Escape') onClose();
+    };
+
+    console.log("no me renderizo");
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal-box" onClick={e => e.stopPropagation()}>
+                <h2 className="modal-title">Renombrar categoría</h2>
+
+                <div className="modal-field">
+                    <label>Nuevo nombre</label>
+                    <input
+                        type="text"
+                        value={newName}
+                        onChange={e => setNewName(e.target.value)}
+                        onKeyDown={handleKeyDown}
+                        autoFocus
+                    />
+                </div>
+
+                {error && <p style={{ color: 'var(--color-danger, #ef4444)', fontSize: '0.85rem' }}>{error}</p>}
+
+                <div className="modal-actions">
+                    <button className="btn-ghost" onClick={onClose}>Cancelar</button>
+                    <button
+                        className="btn-primary"
+                        onClick={handleSave}
+                        disabled={!newName.trim() || saving}
+                    >
+                        {saving ? 'Guardando…' : 'Guardar'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 /* ─── Context Menu ───────────────────────────────────────────────────────────── */
 
 const MenuRightClick = ({
@@ -400,6 +476,7 @@ const MenuRightClick = ({
     ...props
 }: any) => {
     const { authFetch } = useAuth();
+    const [showRenameModal, setShowRenameModal] = useState(false);
 
     const handleDelete = async () => {
         const res = await authFetch(ROUTES.delete_node, {
@@ -417,11 +494,27 @@ const MenuRightClick = ({
         setShowData(true);
     };
 
+    const handleRename = () => {
+        setShowRenameModal(true);
+    };
     return (
-        <div style={{ top, left, right, bottom }} className="context-menu" {...props}>
-            <button onClick={handleView}>Ver datos</button>
-            <button className="btn-danger" onClick={handleDelete}>Eliminar</button>
-        </div>
+        <>
+            <div style={{ top, left, right, bottom }} className="context-menu" {...props}>
+                <button onClick={handleView}>Ver datos</button>
+                <button onClick={handleRename}>Renombrar</button>
+                <button className="btn-danger" onClick={handleDelete}>Eliminar</button>
+            </div>
+
+            {showRenameModal && (
+                <RenameModal
+                    currentName={category}
+                    graph_id={graph_id}
+                    node_id={id}
+                    onClose={() => setShowRenameModal(false)}
+                    onRenamed={() => setExec(!exec)}
+                />
+            )}
+        </>
     );
 };
 
@@ -683,6 +776,16 @@ function SectionGraph({ exec = false, graph_id, onNodeDeleted, onCaptureReady }:
         fetchProgress();
     }, [graph_id, exec, nodeDeleted]);
 
+    const saveNodePosition = useCallback(async (nodeId: string, x: number, y: number) => {
+        try {
+            await authFetch(ROUTES.update_node_position, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ graph_id, node_id: parseInt(nodeId), pos_x: x, pos_y: y }),
+            });
+        } catch (e) { console.error('Position save error:', e); }
+    }, [graph_id, authFetch]);
+
     const onConnect = useCallback(async (params: Connection) => {
         if (!params.source || !params.target || !selectedRelation) return;
         const body = {
@@ -721,11 +824,16 @@ function SectionGraph({ exec = false, graph_id, onNodeDeleted, onCaptureReady }:
                 if (!res.ok) throw new Error('Error loading graph');
                 const data: { nodes: any[]; edges: any[] } = await res.json();
 
-                const newNodes: Node[] = data.nodes.map((n, i) => ({
-                    id: n.id.toString(),
-                    data: { label: n.name },
-                    position: { x: (i % 5) * 200, y: Math.floor(i / 5) * 120 },
-                }));
+                const newNodes: Node[] = data.nodes.map((n, i) => {
+                    const hasPos = n.pos_x !== null && n.pos_y !== null;
+                    return {
+                        id: n.id.toString(),
+                        data: { label: n.name },
+                        position: hasPos
+                            ? { x: n.pos_x, y: n.pos_y }
+                            : { x: (i % 5) * 200, y: Math.floor(i / 5) * 120 },
+                    };
+                });
                 const newEdges: Edge[] = data.edges.map(e => ({
                     id: String(e.id),
                     source: e.source.toString(),
@@ -734,10 +842,23 @@ function SectionGraph({ exec = false, graph_id, onNodeDeleted, onCaptureReady }:
                 }));
                 setNodes(newNodes);
                 setEdges(newEdges);
+
+                // Persistir inmediatamente las posiciones fallback de nodos sin coordenadas en BD
+                const unpositioned = data.nodes.filter((n: any) => n.pos_x === null || n.pos_y === null);
+                if (unpositioned.length > 0) {
+                    Promise.all(unpositioned.map((n: any) => {
+                        const i = data.nodes.indexOf(n);
+                        return saveNodePosition(n.id.toString(), (i % 5) * 200, Math.floor(i / 5) * 120);
+                    }));
+                }
             } catch (e) { console.error(e); }
         };
         fetchGraph();
     }, [graph_id, exec, nodeDeleted, edgeDeleted]);
+
+    const onNodeDragStop = useCallback((_event: any, node: Node) => {
+        saveNodePosition(node.id, node.position.x, node.position.y);
+    }, [saveNodePosition]);
 
     const onNodeContextMenu = useCallback((event: any, nodo: any) => {
         event.preventDefault();
@@ -804,6 +925,7 @@ function SectionGraph({ exec = false, graph_id, onNodeDeleted, onCaptureReady }:
                     onNodesChange={onNodesChange}
                     onEdgesChange={onEdgesChange}
                     onConnect={onConnect}
+                    onNodeDragStop={onNodeDragStop}
                     onNodeContextMenu={onNodeContextMenu}
                     onPaneClick={onPaneClick}
                     onEdgeClick={onEdgeClick}
