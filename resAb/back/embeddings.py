@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 import pandas as pd
 import numpy as np
 import os
+import polars as pl
 
 
 load_dotenv() #carga variables de entorno definidas en el archivo .env
@@ -26,7 +27,7 @@ def get_embeddings_batch(texts, model="text-embedding-ada-002"):
 
 
 #funcion que asigna ID de manera automática a cada vector o utiliza uno ya presente en el csv
-def get_embeddings_main(dataframe_csv : pd.DataFrame, text_column, ID_column = None):
+def get_embeddings_main(dataframe_csv : pl.DataFrame, text_column, ID_column = None)->pl.DataFrame:
     if text_column not in dataframe_csv.columns:
         raise KeyError(f"Columna {text_column} no encontrada")
     list_text = dataframe_csv[text_column].tolist()
@@ -34,7 +35,7 @@ def get_embeddings_main(dataframe_csv : pd.DataFrame, text_column, ID_column = N
         raise ValueError("Lista vacia")
     embeddings_list = get_embeddings_batch(list_text)
     try:
-        dataframe_output = pd.DataFrame({
+        dataframe_output = pl.DataFrame({
             'embedding': [np.array(emb, dtype=np.float32) for emb in embeddings_list]
         })
     except:

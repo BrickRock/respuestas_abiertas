@@ -2,19 +2,19 @@ import pandas as pd
 from django.http import HttpResponse
 import s3fs, os, random
 from .embeddings import get_embeddings_main
-from .models import users, graphs, edge, nodes, relationship
+from .models import Users, Graphs, Edge, Nodes, Relationship, Data
 import numpy as np
 from django.db.models import Q
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
-
+import polars as pl
 
 # ---------------------------------------------------------------------------
 # S3 helpers
 # ---------------------------------------------------------------------------
-BUCKET = "user-graphs"
+BUCKET = "user-Graphs"
 COLUM_COUNT_OCURRENCE = 'selected'
 fs = s3fs.S3FileSystem(
     key=os.getenv("AWS_ACCESS_KEY_ID"),
@@ -99,8 +99,8 @@ def login_view(request):
     if not name or not password:
         return Response({'error': 'name y password son requeridos'}, status=400)
     try:
-        user = users.objects.get(name=name)
-    except users.DoesNotExist:
+        user = Users.objects.get(name=name)
+    except Users.DoesNotExist:
         return Response({'error': 'Credenciales inválidas'}, status=401)
     if not user.check_password(password):
         return Response({'error': 'Credenciales inválidas'}, status=401)
@@ -112,6 +112,10 @@ def login_view(request):
         'user': {'id': user.pk, 'name': user.name},
     })
 
+
+def save_row(row, id_column, graph : Graphs):
+    a = Data(id_data = row[id_column], embedding=row['embedding'], graph=graph)
+    a.save()
 
 # ---------------------------------------------------------------------------
 # Analysis
@@ -138,24 +142,21 @@ def new_analysis_request(request):
     if extension not in allowed_extensions:
         return Response("Formato de archivo no permitido", status=400)
 
-    graph = graphs(id_user=user, name=name)
+    graph = Graphs(id_user=user, name=name)
     graph.save()
     pk = graph.pk
     BASE_PATH = f"{user.pk}/{pk}"
-    data = pd.read_csv(file)  # type: ignore
+    data = pl.read_csv(file)  # type: ignore
     if id_column is None:
         data['ID'] = [str(i) for i in range(data.shape[0])]
     embedding = get_embeddings_main(data, text_column=text_column, ID_column=id_column)  # type: ignore
-    embedding['block'] = [str(0) for i in range(data.shape[0])]#añadimos nueva columna que indica cuales registros no se pueden utiliza con un 1
-    embedding[COLUM_COUNT_OCURRENCE] = [str(0) for i in range(data.shape[0])]#añadimos nueva columna que indica cuales registros pertenecen a al menos una categoria
-    save_or_update_tree_s3(f"{BASE_PATH}/data.parquet", data=data) #almacena el csv original sin ninguna modificacion
-    save_or_update_tree_s3(f"{BASE_PATH}/embedding.parquet", data=embedding) #almacena un archivo paralelo que conteine el embedding y su ID
-    graph.file_data_path = f"{BASE_PATH}/data.parquet"
-    graph.file_embedding_path = f"{BASE_PATH}/embedding.parquet"
+    embedding['block'] = [False for i in range(data.shape[0])]#añadimos nueva columna que indica cuales registros no se pueden utiliza con un 1
+    save_or_update_tree_s3(f"{BASE_PATH}/{name}.csv", data=data) #almacena el csv original
+    graph.file_data_path = f"{BASE_PATH}/{name}.csv"
     graph.text_column = text_column
     graph.id_column = "ID" if id_column is None else id_column
-    graph.graph_structure = {0: []}  # type: ignore
     graph.save()
+    map(save_row, embedding)
     return Response({
         "status": "ok",
         "graph_id": pk,
@@ -177,8 +178,8 @@ def search_similar(request):
 
     user = request.user
     try:
-        graph = graphs.objects.get(id_user=user, id=graph_id)
-    except graphs.DoesNotExist:
+        graph = Graphs.objects.get(id_user=user, id=graph_id)
+    except Graphs.DoesNotExist:
         return Response("Grafo no encontrado", status=400)
 
     if is_preanalized == 1: # error aqui, si la peticion indica 1 hay posibilidad de que el archivo parquet temp no incluya toda la informacion
@@ -215,8 +216,8 @@ def delete_temp_embedding_endpoint(request):
 
     user = request.user
     try:
-        graphs.objects.get(id_user=user, id=graph_id)
-    except graphs.DoesNotExist:
+        Graphs.objects.get(id_user=user, id=graph_id)
+    except Graphs.DoesNotExist:
         return Response("Grafo no encontrado", status=400)
 
     delete_parquet_s3(f"{user.pk}/{graph_id}/temp_emb.parquet")
@@ -235,11 +236,11 @@ def confirm_new_category(request):
 
     user = request.user
     try:
-        graph = graphs.objects.get(id_user=user, id=graph_id)
-    except graphs.DoesNotExist:
+        graph = Graphs.objects.get(id_user=user, id=graph_id)
+    except Graphs.DoesNotExist:
         return Response("Grafo no encontrado", status=400)
     
-    category = nodes.objects.filter(node_name=name_category, graph=graph).count()
+    category = Nodes.objects.filter(node_name=name_category, graph=graph).count()
     if category != 0:
         return Response("Categoria ya existente", status=400)
 
@@ -281,8 +282,8 @@ def sample(request):
 
     user = request.user
     try:
-        graph = graphs.objects.get(id_user=user, id=graph_id)
-    except graphs.DoesNotExist:
+        graph = Graphs.objects.get(id_user=user, id=graph_id)
+    except Graphs.DoesNotExist:
         return Response("Grafo no encontrado", status=400)
 
     BASE_PATH = f"{user.pk}/{graph_id}"
@@ -362,8 +363,8 @@ def calculate_sim_cos(request):
 
     user = request.user # el decorador api_view hace cosas
     try:
-        graph = graphs.objects.get(id_user=user, id=graph_id)
-    except graphs.DoesNotExist:
+        graph = Graphs.objects.get(id_user=user, id=graph_id)
+    except Graphs.DoesNotExist:
         return Response("Grafo no encontrado", status=400)
     PATH_EMB = f"{user.pk}/{graph_id}/embedding.parquet"
     df_embedding: pd.DataFrame = read_tree_s3(PATH_EMB)
@@ -397,8 +398,8 @@ def opc_cut(request):
 
     user = request.user
     try:
-        graph = graphs.objects.get(id_user=user, id=graph_id)
-    except graphs.DoesNotExist:
+        graph = Graphs.objects.get(id_user=user, id=graph_id)
+    except Graphs.DoesNotExist:
         return Response("Grafo no encontrado", status=400)
 
     list_cos = sorted(range_cos(min_cos, n_opc))
@@ -430,8 +431,8 @@ def get_categorized_data(request):
 
     user = request.user
     try:
-        graph = graphs.objects.get(id_user=user, id=graph_id)
-    except graphs.DoesNotExist:
+        graph = Graphs.objects.get(id_user=user, id=graph_id)
+    except Graphs.DoesNotExist:
         return Response("Grafo no encontrado", status=400)
 
     BASE_PATH = f"{user.pk}/{graph_id}"
@@ -445,7 +446,7 @@ def get_categorized_data(request):
 
     main_df['categorias'] = [[] for _ in range(len(main_df))]
 
-    for node in nodes.objects.filter(graph=graph):
+    for node in Nodes.objects.filter(graph=graph):
         node_name = node.node_name
         try:
             category_df = read_tree_s3(f"{BASE_PATH}/{node_name}.parquet")
@@ -477,9 +478,9 @@ def get_full_graph(request):
 
     user = request.user
     try:
-        graph_obj = graphs.objects.get(id=graph_id, id_user=user)
-        all_nodes = nodes.objects.filter(graph=graph_obj)
-        edges_objs = edge.objects.filter(from_node__in=all_nodes).select_related('from_node', 'to_node', 'relation')
+        graph_obj = Graphs.objects.get(id=graph_id, id_user=user)
+        all_nodes = Nodes.objects.filter(graph=graph_obj)
+        edges_objs = Edge.objects.filter(from_node__in=all_nodes).select_related('from_node', 'to_node', 'relation')
 
         nodes_list = [{"id": n.id, "name": n.node_name, "pos_x": n.pos_x, "pos_y": n.pos_y} for n in all_nodes]
         edges_list = [
@@ -501,7 +502,7 @@ def get_full_graph(request):
 
         return Response({"nodes": nodes_list, "edges": edges_list})
 
-    except graphs.DoesNotExist:
+    except Graphs.DoesNotExist:
         return Response("El grafo no existe o no pertenece al usuario", status=400)
     except Exception as e:
         return Response(f"Error inesperado: {e}", status=500)
@@ -521,27 +522,27 @@ def add_edge(request):
 
         user = request.user
         try:
-            graph_obj = graphs.objects.get(id=graph_id, id_user=user)
-        except graphs.DoesNotExist:
+            graph_obj = Graphs.objects.get(id=graph_id, id_user=user)
+        except Graphs.DoesNotExist:
             return Response("Grafo no encontrado o no pertenece al usuario", status=400)
 
         try:
-            node1 = nodes.objects.get(id=node_id_1, graph=graph_obj)
-            node2 = nodes.objects.get(id=node_id_2, graph=graph_obj)
-        except nodes.DoesNotExist:
+            node1 = Nodes.objects.get(id=node_id_1, graph=graph_obj)
+            node2 = Nodes.objects.get(id=node_id_2, graph=graph_obj)
+        except Nodes.DoesNotExist:
             return Response("Uno o ambos nodos no encontrados en este grafo", status=400)
 
         try:
-            rel_obj = relationship.objects.get(id=connection_type)
-        except relationship.DoesNotExist:
+            rel_obj = Relationship.objects.get(id=connection_type)
+        except Relationship.DoesNotExist:
             return Response("Tipo de conexión (relación) no encontrado", status=400)
 
-        edge_obj = edge.objects.filter(from_node=node1, to_node=node2).first()
+        edge_obj = Edge.objects.filter(from_node=node1, to_node=node2).first()
         if edge_obj:
             edge_obj.relation = rel_obj
             edge_obj.save()
         else:
-            edge.objects.create(from_node=node1, to_node=node2, relation=rel_obj)
+            Edge.objects.create(from_node=node1, to_node=node2, relation=rel_obj)
 
         return Response("OK", status=200)
 
@@ -550,13 +551,13 @@ def add_edge(request):
 
 
 @api_view(['GET'])
-def get_user_graphs(request):
+def get_user_Graphs(request):
     """Obtener todos los grafos del usuario autenticado."""
     user = request.user
-    user_graphs = graphs.objects.filter(id_user=user)
+    user_Graphs = Graphs.objects.filter(id_user=user)
     results = [
         {"name": g.name if g.name else f"Grafo {g.id}", "id": g.id, "date": 0}
-        for g in user_graphs
+        for g in user_Graphs
     ]
     return Response(results)
 
@@ -576,8 +577,8 @@ def delete_node(request):
             return Response("Faltan parámetros obligatorios: graph_id, node_id", status=400)
 
         user = request.user
-        graph = graphs.objects.get(id=graph_id, id_user=user)
-        node = nodes.objects.get(id=node_id, graph=graph)
+        graph = Graphs.objects.get(id=graph_id, id_user=user)
+        node = Nodes.objects.get(id=node_id, graph=graph)
         try:
             node_parquet_path = f"{user.pk}/{graph_id}/{node.node_name}.parquet"
             df_delete = read_tree_s3(node_parquet_path)
@@ -598,7 +599,7 @@ def delete_node(request):
 
         return HttpResponse(status=204)
 
-    except (graphs.DoesNotExist, nodes.DoesNotExist):
+    except (Graphs.DoesNotExist, Nodes.DoesNotExist):
         return Response("Grafo o nodo no encontrado", status=400)
     except Exception as e:
         return Response(f"Error inesperado: {e}", status=500)
@@ -630,11 +631,11 @@ def create_relationship(request):
         if not graph_id:
             return Response("graph_id es requerido para relaciones no globales", status=400)
         try:
-            graph_obj = graphs.objects.get(id=graph_id, id_user=user)
-        except graphs.DoesNotExist:
+            graph_obj = Graphs.objects.get(id=graph_id, id_user=user)
+        except Graphs.DoesNotExist:
             return Response("Grafo no encontrado o no pertenece al usuario", status=400)
 
-    rel = relationship.objects.create(
+    rel = Relationship.objects.create(
         type=label,
         color=color,
         is_dashed=is_dashed,
@@ -655,12 +656,12 @@ def get_relations(request):
         return Response("graph_id es requerido", status=400)
     user = request.user
     try:
-        graph_obj = graphs.objects.get(id=graph_id, id_user=user)
-    except graphs.DoesNotExist:
+        graph_obj = Graphs.objects.get(id=graph_id, id_user=user)
+    except Graphs.DoesNotExist:
         return Response("Grafo no encontrado", status=400)
 
     from django.db.models import Q as DQ
-    rels = relationship.objects.filter(
+    rels = Relationship.objects.filter(
         DQ(is_global=1, id_user=user) | DQ(is_global=0, graph=graph_obj)
     )
     data = [
@@ -686,8 +687,8 @@ def get_progress(request):
         return Response("graph_id es requerido", status=400)
     user = request.user
     try:
-        graphs.objects.get(id_user=user, id=graph_id)
-    except graphs.DoesNotExist:
+        Graphs.objects.get(id_user=user, id=graph_id)
+    except Graphs.DoesNotExist:
         return Response("Grafo no encontrado", status=400)
 
     df = read_tree_s3(f"{user.pk}/{graph_id}/embedding.parquet")
@@ -718,13 +719,13 @@ def rename_category(request):
 
     user = request.user
     try:
-        graph = graphs.objects.get(id=graph_id, id_user=user)
-    except graphs.DoesNotExist:
+        graph = Graphs.objects.get(id=graph_id, id_user=user)
+    except Graphs.DoesNotExist:
         return Response("Grafo no encontrado o no pertenece al usuario", status=400)
 
     try:
-        node = nodes.objects.get(id=node_id, graph=graph)
-    except nodes.DoesNotExist:
+        node =Nodes.objects.get(id=node_id, graph=graph)
+    except Nodes.DoesNotExist:
         return Response("Nodo no encontrado en este grafo", status=400)
 
     old_name = node.node_name
@@ -734,7 +735,7 @@ def rename_category(request):
         return Response("OK", status=200)
 
     # Verificar colisión con otro nodo del mismo grafo
-    if nodes.objects.filter(node_name=new_name, graph=graph).exists():
+    if Nodes.objects.filter(node_name=new_name, graph=graph).exists():
         return Response("Ya existe una categoría con ese nombre en este grafo", status=400)
 
     BASE_PATH   = f"{user.pk}/{graph_id}"
@@ -792,13 +793,13 @@ def update_node_position(request):
 
     user = request.user
     try:
-        graph_obj = graphs.objects.get(id=graph_id, id_user=user)
-    except graphs.DoesNotExist:
+        graph_obj = Graphs.objects.get(id=graph_id, id_user=user)
+    except Graphs.DoesNotExist:
         return Response("Grafo no encontrado", status=400)
 
     try:
-        node_obj = nodes.objects.get(id=node_id, graph=graph_obj)
-    except nodes.DoesNotExist:
+        node_obj = Nodes.objects.get(id=node_id, graph=graph_obj)
+    except Nodes.DoesNotExist:
         return Response("Nodo no encontrado en este grafo", status=400)
 
     node_obj.pos_x = pos_x
@@ -816,8 +817,8 @@ def delete_graph(request):
 
     user = request.user
     try:
-        graph = graphs.objects.get(id=graph_id, id_user=user)
-    except graphs.DoesNotExist:
+        graph = Graphs.objects.get(id=graph_id, id_user=user)
+    except Graphs.DoesNotExist:
         return Response("Grafo no encontrado o no pertenece al usuario", status=400)
 
     s3_path = f"{BUCKET}/{user.pk}/{graph_id}"
@@ -848,17 +849,17 @@ def delete_edge(request):
             return Response(f"Faltan parámetros obligatorios", status=400)
 
         user = request.user
-        graph = graphs.objects.get(id=graph_id, id_user=user)
-        from_node = nodes.objects.get(id=from_node_id, graph=graph)
-        to_node = nodes.objects.get(id=to_node_id, graph=graph)
-        edge_selected = edge.objects.get(
+        graph = Graphs.objects.get(id=graph_id, id_user=user)
+        from_node = Nodes.objects.get(id=from_node_id, graph=graph)
+        to_node = Nodes.objects.get(id=to_node_id, graph=graph)
+        edge_selected = Edge.objects.get(
             Q(Q(from_node=from_node) & Q(to_node=to_node)) |
             Q(Q(from_node=to_node) & Q(to_node=from_node))
         )
         edge_selected.delete()
         return HttpResponse(status=204)
 
-    except (graphs.DoesNotExist, nodes.DoesNotExist, edge.DoesNotExist):
+    except (Graphs.DoesNotExist, Nodes.DoesNotExist, Edge.DoesNotExist):
         return Response("Grafo, nodo o arista no encontrado", status=400)
     except Exception as e:
         return Response(f"Error inesperado: {e}", status=500)
