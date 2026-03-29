@@ -18,12 +18,19 @@ class Users(models.Model):
         return _check_password(raw_password, self.password)
 
 class Graphs(models.Model):
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('done',    'Done'),
+        ('failed',  'Failed'),
+    ]
+
     file_data_path = models.CharField(max_length=255)
-    #file_embedding_path = models.CharField(max_length=255)
     id_user = models.ForeignKey(Users, on_delete=models.CASCADE)
     text_column = models.CharField(max_length=50, null=False, default="")
     id_column = models.CharField(max_length=20, null=False, default="")
     name = models.CharField(max_length=100, null=False)
+    task_id = models.CharField(max_length=255, null=True, blank=True)
+    status  = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
 
 class Nodes(models.Model): #nodes o categorias son lo mismo
     node_name = models.CharField(max_length=255, null=False)
@@ -69,7 +76,7 @@ class Relationship(models.Model):
     stroke_width = models.IntegerField(default=2)
     is_global    = models.IntegerField(default=0)  # 1 = disponible en todos los grafos del user
     graph        = models.ForeignKey(Graphs, on_delete=models.CASCADE, null=True, blank=True)
-    id_user      = models.ForeignKey(users, on_delete=models.CASCADE, null=True, blank=True)
+    id_user      = models.ForeignKey(Users, on_delete=models.CASCADE, null=True, blank=True)
 
 class Edge(models.Model):
     from_node = models.ForeignKey(Nodes, on_delete=models.CASCADE, related_name="from_node")

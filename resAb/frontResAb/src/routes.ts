@@ -20,4 +20,5 @@ export const ROUTES = {
     get_relations: `${BASE}/get_relations`,
     update_node_position: `${BASE}/update_node_position`,
     rename_category : `${BASE}/rename_category`,
+    analysis_status: `${BASE}/analysis_status`,
 }

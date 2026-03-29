@@ -10,11 +10,16 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 import polars as pl
+import pyarrow as pa
+import pyarrow.parquet as pq
+from .task import process_graph
+
+from django.views.decorators.csrf import csrf_exempt
 
 # ---------------------------------------------------------------------------
 # S3 helpers
 # ---------------------------------------------------------------------------
-BUCKET = "user-Graphs"
+BUCKET = "user-graphs"
 COLUM_COUNT_OCURRENCE = 'selected'
 fs = s3fs.S3FileSystem(
     key=os.getenv("AWS_ACCESS_KEY_ID"),
@@ -23,16 +28,13 @@ fs = s3fs.S3FileSystem(
         "endpoint_url": os.getenv("MINIO_ENDPOINT_URL", "http://localhost:9000")
     })
 
-def save_or_update_tree_s3(path: str, data: pd.DataFrame):
+def save_or_update_tree_s3(path: str, data):
     if not fs.exists(BUCKET):
         fs.mkdir(BUCKET)
     full_path = f"{BUCKET}/{path}"
-    data.to_parquet(
-        path=full_path,
-        engine="pyarrow",
-        filesystem=fs,
-        index=False,
-    )
+    table = data.to_arrow() if isinstance(data, pl.DataFrame) else pa.Table.from_pandas(data)
+    with fs.open(full_path, 'wb') as f:
+        pq.write_table(table, f)
 
 def read_tree_s3(path: str) -> pd.DataFrame:
     full_path = f"{BUCKET}/{path}"
@@ -122,47 +124,62 @@ def save_row(row, id_column, graph : Graphs):
 # ---------------------------------------------------------------------------
 @api_view(['POST'])
 def new_analysis_request(request):
-    file = request.FILES.get("file")
-    if not file:
-        return Response("Archivo es requerido", status=400)
-
+    file        = request.FILES.get("file")
     text_column = request.POST.get("text_column")
-    id_column = request.POST.get("id_column", None)
-    name = request.POST.get("name")
+    id_column   = request.POST.get("id_column") or None
+    name        = request.POST.get("name")
 
-    if not text_column:
-        return Response("text_column es requerido", status=400)
-    if not name:
-        return Response("name es requerido", status=400)
-
-    user = request.user
-
-    allowed_extensions = ["csv"]
-    extension = file.name.split(".")[-1].lower()
-    if extension not in allowed_extensions:
+    if not file:        return Response("Archivo es requerido", status=400)
+    if not text_column: return Response("text_column es requerido", status=400)
+    if not name:        return Response("name es requerido", status=400)
+    if file.name.split(".")[-1].lower() != "csv":
         return Response("Formato de archivo no permitido", status=400)
 
-    graph = Graphs(id_user=user, name=name)
+    try:
+        data = pl.read_csv(file)
+    except Exception:
+        return Response("CSV inválido o corrupto", status=400)
+
+    if text_column not in data.columns:
+        return Response(f"Columna '{text_column}' no existe en el CSV", status=400)
+
+    effective_id = id_column or "ID"
+    if not id_column:
+        data = data.with_columns(pl.Series("ID", [str(i) for i in range(data.shape[0])]))
+
+    user = request.user
+    graph = Graphs(
+        id_user=user, name=name,
+        text_column=text_column, id_column=effective_id,
+        file_data_path="", status='pending',
+    )
     graph.save()
-    pk = graph.pk
-    BASE_PATH = f"{user.pk}/{pk}"
-    data = pl.read_csv(file)  # type: ignore
-    if id_column is None:
-        data['ID'] = [str(i) for i in range(data.shape[0])]
-    embedding = get_embeddings_main(data, text_column=text_column, ID_column=id_column)  # type: ignore
-    embedding['block'] = [False for i in range(data.shape[0])]#añadimos nueva columna que indica cuales registros no se pueden utiliza con un 1
-    save_or_update_tree_s3(f"{BASE_PATH}/{name}.csv", data=data) #almacena el csv original
-    graph.file_data_path = f"{BASE_PATH}/{name}.csv"
-    graph.text_column = text_column
-    graph.id_column = "ID" if id_column is None else id_column
-    graph.save()
-    map(save_row, embedding)
-    return Response({
-        "status": "ok",
-        "graph_id": pk,
-        "filename": file.name,
-        "size": file.size,
-    })
+    base = f"{user.pk}/{graph.pk}"
+
+    try:
+        save_or_update_tree_s3(f"{base}/raw.parquet", data)
+    except Exception as exc:
+        graph.delete()
+        return Response(f"Error subiendo archivo: {exc}", status=500)
+
+    graph.file_data_path = f"{base}/raw.parquet"
+    result = process_graph.delay(graph.pk)
+    graph.task_id = result.id
+    graph.save(update_fields=['file_data_path', 'task_id'])
+
+    return Response({"graph_id": graph.pk, "task_id": result.id}, status=202)
+
+
+@api_view(['GET'])
+def analysis_status(request):
+    graph_id = request.GET.get("graph_id")
+    if not graph_id:
+        return Response("graph_id es requerido", status=400)
+    try:
+        graph = Graphs.objects.get(id_user=request.user, id=graph_id)
+    except Graphs.DoesNotExist:
+        return Response("Grafo no encontrado", status=404)
+    return Response({"graph_id": graph.pk, "status": graph.status})
 
 
 @api_view(['GET'])
@@ -223,6 +240,10 @@ def delete_temp_embedding_endpoint(request):
     delete_parquet_s3(f"{user.pk}/{graph_id}/temp_emb.parquet")
     return HttpResponse(status=204)
 
+@csrf_exempt
+def jaja(request):
+    print(make_demo.delay(2,2).id)
+    return HttpResponse("simon", status=200)
 
 @api_view(['GET'])
 def confirm_new_category(request):
@@ -551,12 +572,12 @@ def add_edge(request):
 
 
 @api_view(['GET'])
-def get_user_Graphs(request):
+def get_user_graphs(request):
     """Obtener todos los grafos del usuario autenticado."""
     user = request.user
     user_Graphs = Graphs.objects.filter(id_user=user)
     results = [
-        {"name": g.name if g.name else f"Grafo {g.id}", "id": g.id, "date": 0}
+        {"name": g.name if g.name else f"Grafo {g.id}", "id": g.id, "date": 0, "status": g.status, "task_id": g.task_id}
         for g in user_Graphs
     ]
     return Response(results)
