@@ -212,55 +212,56 @@ function DisplaySample({
 
 /* ─── Review Manager ─────────────────────────────────────────────────────────── */
 
-function ReviewManager({ graph_id, target, setComponent }: any) {
+function ReviewManager({ graph_id, target, setComponent, setReviewParams }: any) {
     const { authFetch } = useAuth();
     const [loading, setLoading] = useState(false);
     const [similarity, setSimilarity] = useState(0.8);
     const [visibleSimilarity, setVisibleSimilarity] = useState<number | string>(similarity);
     const [showSample, setShowSample] = useState(false);
-    const [activateSample, setActivateSample] = useState(false);
+    const [searchResults, setSearchResults] = useState<Data[]>([]);
+    const [totalItems, setTotalItems] = useState(0);
+    const [page, setPage] = useState(1);
+    const PAGE_SIZE = 10;
     const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    useEffect(() => {
-        const preAnalysis = async () => {
-            const url = `${ROUTES.sim_cos}?graph_id=${graph_id}&target_id=${target.id}`;
-            try { 
-                let res = await authFetch(url); 
-                if(res.ok) setActivateSample(true);
+    const fetchResults = useCallback(async (sim: number, p: number) => {
+        setLoading(true);
+        setShowSample(false);
+        const url = `${ROUTES.get_similarity}?graph_id=${graph_id}&target_id=${target.id}&min_similarity=${sim}&page=${p}&page_size=${PAGE_SIZE}`;
+        try {
+            const res = await authFetch(url);
+            if (res.ok) {
+                const json = await res.json();
+                setSearchResults(json.data);
+                setTotalItems(json.total_items);
+                setShowSample(true);
             }
-            catch (e) { console.error('Pre-analysis error:', e); }
-        };
-        preAnalysis();
+        } catch (e) {
+            console.error('Similarity error:', e);
+        } finally {
+            setLoading(false);
+        }
     }, [graph_id, target.id]);
 
     const handleSimilarityChange = (newSim: number) => {
-        if(!activateSample) return;
         setSimilarity(newSim);
-        setLoading(true);
-        setShowSample(false);
+        setPage(1);
         if (timerRef.current) clearTimeout(timerRef.current);
-        timerRef.current = setTimeout(async () => {
-            const url = `${ROUTES.get_similarity}?graph_id=${graph_id}&target_id=${target.id}&min_similarity=${newSim}&preanalized=1`;
-            try {
-                const res = await authFetch(url);
-                if (res.ok) setShowSample(true);
-            } catch (e) {
-                console.error('Similarity error:', e);
-            } finally {
-                setLoading(false);
-            }
-        }, 1000);
+        timerRef.current = setTimeout(() => fetchResults(newSim, 1), 1000);
     };
 
-    const handleNewCategory = ()=> {
-        if(showSample) setComponent(4);
-    }
+    const handleNewCategory = () => {
+        if (showSample) {
+            setReviewParams({ targetId: String(target.id), minSim: similarity });
+            setComponent(4);
+        }
+    };
 
     return (
         <div className="review-manager">
             <div className="review-manager-top">
                 <button className="btn-primary create-category-btn" onClick={handleNewCategory}>
-                    {loading ?    'Cargando': 'Crear categoría'}
+                    {loading ? 'Cargando' : 'Crear categoría'}
                 </button>
             </div>
             <div className="review-layout">
@@ -272,23 +273,21 @@ function ReviewManager({ graph_id, target, setComponent }: any) {
                         max="1"
                         step="0.001"
                         value={similarity}
-                        onChange={e => {handleSimilarityChange(parseFloat(e.target.value));
-                            setVisibleSimilarity(parseFloat(e.target.value).toFixed(3));
+                        onChange={e => {
+                            const v = parseFloat(e.target.value);
+                            setVisibleSimilarity(v.toFixed(3));
+                            handleSimilarityChange(v);
                         }}
                         className="vertical-slider"
                     />
-                    {/*<span className="similarity-label">{similarity.toFixed(3)}</span> */}
                     <input
                         type="text"
                         value={visibleSimilarity}
                         className="similarity-input"
-                        
                         onChange={e => {
                             const v = parseFloat(e.target.value);
                             setVisibleSimilarity(e.target.value);
-
-                            if (!isNaN(v) && v >= 0 && v <= 1) {handleSimilarityChange(v);
-                            }
+                            if (!isNaN(v) && v >= 0 && v <= 1) handleSimilarityChange(v);
                         }}
                     />
                 </div>
@@ -303,23 +302,33 @@ function ReviewManager({ graph_id, target, setComponent }: any) {
                         {loading ? (
                             <div className="loader-container"><div className="loader" /></div>
                         ) : showSample ? (
-                            <DisplaySample
-                                graph_id={graph_id}
-                                initialTypeSample={2}
-                                setComponent={setComponent}
-                                setTarget={() => {}}
-                            />
+                            <>
+                                <DisplayData data={searchResults} setTarget={() => {}} setComponent={() => {}} readOnly={true} />
+                                <div className="sample-footer">
+                                    <span className="sample-count">{totalItems} resultados</span>
+                                    <Pagination
+                                        page={page}
+                                        pageSize={PAGE_SIZE}
+                                        totalItems={totalItems}
+                                        setPage={(p: number) => {
+                                            setPage(p);
+                                            fetchResults(similarity, p);
+                                        }}
+                                    />
+                                </div>
+                                <button className="btn-ghost" style={{ fontSize: 'var(--font-size-xs)' }} onClick={() => setComponent(1)}>
+                                    ← Volver
+                                </button>
+                            </>
                         ) : (
                             <div>
-                                    <div className="review-placeholder">
-                                        Mueve el deslizador para ver resultados similares
-                                    </div>
-                            
-                                    <button className="btn-ghost" style={{ fontSize: 'var(--font-size-xs)' }} onClick={() => setComponent(1)}>
-                                        ← Volver
-                                    </button>
+                                <div className="review-placeholder">
+                                    Mueve el deslizador para ver resultados similares
+                                </div>
+                                <button className="btn-ghost" style={{ fontSize: 'var(--font-size-xs)' }} onClick={() => setComponent(1)}>
+                                    ← Volver
+                                </button>
                             </div>
-                          
                         )}
                     </div>
                 </div>
@@ -335,15 +344,17 @@ interface ConfirmCategoryProps {
     setComponent: (n: number) => void;
     setExec: (v: boolean) => void;
     exec: boolean;
+    targetId: string;
+    minSimilarity: number;
 }
 
-export function ConfirmCategory({ graph_id, setComponent, setExec, exec }: ConfirmCategoryProps) {
+export function ConfirmCategory({ graph_id, setComponent, setExec, exec, targetId, minSimilarity }: ConfirmCategoryProps) {
     const { authFetch } = useAuth();
     const [categoryName, setCategoryName] = useState('');
     const [blockResponses, setBlockResponses] = useState(false);
 
     const handleConfirm = async () => {
-        const url = `${ROUTES.new_category}?graph_id=${graph_id}&name=${categoryName}${blockResponses ? '&block=1' : ''}`;
+        const url = `${ROUTES.new_category}?graph_id=${graph_id}&name=${categoryName}&target_id=${targetId}&min_similarity=${minSimilarity}${blockResponses ? '&block=1' : ''}`;
         try {
             const res = await authFetch(url);
             if (res.ok) {
@@ -471,21 +482,38 @@ function RenameModal({ currentName, graph_id, node_id, onClose, onRenamed }: {
 
 const MenuRightClick = ({
     id, top, left, right, bottom,
-    graph_id, exec, onPaneClick, setExec,
+    graph_id, onPaneClick, setExec,
     setData, category, setShowData, onNodeDeleted,
     ...props
 }: any) => {
     const { authFetch } = useAuth();
     const [showRenameModal, setShowRenameModal] = useState(false);
+    const [deleting, setDeleting] = useState(false);
+    const [deleteError, setDeleteError] = useState('');
 
     const handleDelete = async () => {
-        const res = await authFetch(ROUTES.delete_node, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ node_id: id, graph_id }),
-        });
-        if (res.ok) { onPaneClick(); setExec(!exec); onNodeDeleted(); }
-        else console.error('Failed to delete node');
+        if (!window.confirm(`¿Eliminar la categoría "${category}"? Esta acción no se puede deshacer.`)) return;
+        setDeleting(true);
+        setDeleteError('');
+        try {
+            const res = await authFetch(ROUTES.delete_node, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ node_id: id, graph_id }),
+            });
+            if (res.ok) {
+                onPaneClick();
+                setExec((p: boolean) => !p);
+                onNodeDeleted();
+            } else {
+                const msg = await res.text();
+                setDeleteError(msg || 'Error al eliminar');
+            }
+        } catch {
+            setDeleteError('Error de red');
+        } finally {
+            setDeleting(false);
+        }
     };
 
     const handleView = () => {
@@ -494,15 +522,21 @@ const MenuRightClick = ({
         setShowData(true);
     };
 
-    const handleRename = () => {
-        setShowRenameModal(true);
-    };
     return (
         <>
             <div style={{ top, left, right, bottom }} className="context-menu" {...props}>
                 <button onClick={handleView}>Ver datos</button>
-                <button onClick={handleRename}>Renombrar</button>
-                <button className="btn-danger" onClick={handleDelete}>Eliminar</button>
+                <button onClick={() => setShowRenameModal(true)}>Renombrar</button>
+                <button
+                    className="btn-danger"
+                    onClick={handleDelete}
+                    disabled={deleting}
+                >
+                    {deleting ? 'Eliminando…' : 'Eliminar'}
+                </button>
+                {deleteError && (
+                    <span className="context-menu-error">{deleteError}</span>
+                )}
             </div>
 
             {showRenameModal && (
@@ -511,7 +545,7 @@ const MenuRightClick = ({
                     graph_id={graph_id}
                     node_id={id}
                     onClose={() => setShowRenameModal(false)}
-                    onRenamed={() => setExec(!exec)}
+                    onRenamed={() => setExec((p: boolean) => !p)}
                 />
             )}
         </>
@@ -976,6 +1010,7 @@ function SectionGraph({ exec = false, graph_id, onNodeDeleted, onCaptureReady }:
 function SectionDesk({ exec, setExec, graph_id, nodeDeleted }: any) {
     const [currentComponent, setCurrentComponent] = useState(1);
     const [target, setTarget] = useState<{ data: string; id: string | number }>();
+    const [reviewParams, setReviewParams] = useState<{ targetId: string; minSim: number } | null>(null);
 
     return (
         <section className="desk">
@@ -992,14 +1027,17 @@ function SectionDesk({ exec, setExec, graph_id, nodeDeleted }: any) {
                     graph_id={graph_id}
                     target={target}
                     setComponent={setCurrentComponent}
+                    setReviewParams={setReviewParams}
                 />
             )}
-            {currentComponent === 4 && (
+            {currentComponent === 4 && reviewParams && (
                 <ConfirmCategory
                     graph_id={graph_id}
                     setComponent={setCurrentComponent}
                     setExec={setExec}
                     exec={exec}
+                    targetId={reviewParams.targetId}
+                    minSimilarity={reviewParams.minSim}
                 />
             )}
         </section>

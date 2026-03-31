@@ -2,7 +2,7 @@ import pandas as pd
 from django.http import HttpResponse
 import s3fs, os, random
 from .embeddings import get_embeddings_main
-from .models import Users, Graphs, Edge, Nodes, Relationship, Data
+from .models import Users, Graphs, Edge, Nodes, Relationship, Data, Nodes_Category
 import numpy as np
 from django.db.models import Q
 from rest_framework.decorators import api_view, permission_classes
@@ -13,6 +13,7 @@ import polars as pl
 import pyarrow as pa
 import pyarrow.parquet as pq
 from .task import process_graph
+from pgvector.django import CosineDistance
 
 from django.views.decorators.csrf import csrf_exempt
 
@@ -46,6 +47,13 @@ def read_tree_s3(path: str) -> pd.DataFrame:
         filesystem=fs,
     )
     return data
+
+def read_parquet_s3_pl(path: str) -> pl.DataFrame:
+    full_path = f"{BUCKET}/{path}"
+    if not fs.exists(full_path):
+        raise FileNotFoundError(f"El archivo {full_path} no existe en el bucket {BUCKET}")
+    with fs.open(full_path, 'rb') as f:
+        return pl.read_parquet(f)
 
 def delete_parquet_s3(path: str):
     full_path = f"{BUCKET}/{path}"
@@ -184,12 +192,13 @@ def analysis_status(request):
 
 @api_view(['GET'])
 def search_similar(request):
-    """Buscar embeddings similares y los almacena en curreReviewParquet."""
+    """Buscar embeddings similares usando pgvector. Devuelve resultados paginados."""
     try:
-        graph_id = request.GET.get("graph_id")
+        graph_id  = request.GET.get("graph_id")
         target_id = request.GET.get("target_id")
-        min_sim = float(request.GET.get("min_similarity", 0.8))
-        is_preanalized = int(request.GET.get('preanalized', 0))
+        min_sim   = float(request.GET.get("min_similarity", 0.8))
+        page      = int(request.GET.get("page", 1))
+        page_size = int(request.GET.get("page_size", 10))
     except Exception as e:
         return Response(f"Error en los datos proporcionados {e}", status=400)
 
@@ -199,30 +208,60 @@ def search_similar(request):
     except Graphs.DoesNotExist:
         return Response("Grafo no encontrado", status=400)
 
-    if is_preanalized == 1: # error aqui, si la peticion indica 1 hay posibilidad de que el archivo parquet temp no incluya toda la informacion
-        tmp_df: pd.DataFrame = read_tree_s3(f"{user.pk}/{graph_id}/temp_emb.parquet")
-        data = tmp_df[tmp_df['similarity'] >= min_sim]
-        result = data[['similarity', graph.text_column, graph.id_column]]  # type: ignore
-    else:
-        path = f"{user.pk}/{graph_id}/embedding.parquet"
-        id_column = graph.id_column  # type: ignore
-        embeddings_df = read_tree_s3(path)
-        target_row = embeddings_df[embeddings_df[id_column] == target_id]
-        if target_row.empty:
-            return Response("ID no encontrado", status=400)
-        target_embedding = target_row.iloc[0]['embedding']
-        similares = get_similar_embeddings(
-            target_embedding=target_embedding,
-            embeddings_df=embeddings_df,
-            min_similarity=min_sim,
-        )
-        data_path = f"{user.pk}/{graph_id}/data.parquet"
-        original_data = read_tree_s3(data_path)
-        result = similares.merge(original_data, on=graph.id_column, how='left')  # type: ignore
-        result = result[['similarity', graph.text_column, graph.id_column]]  # type: ignore
+    try:
+        target_data = Data.objects.get(graph=graph, id_data=target_id)
+    except Data.DoesNotExist:
+        return Response("ID no encontrado", status=400)
 
-    save_or_update_tree_s3(f"{user.pk}/{graph_id}/currentReview.parquet", result)
-    return HttpResponse(200)
+    max_dist = 1.0 - min_sim  # CosineDistance = 1 - CosineSimilarity
+
+    qs = (
+        Data.objects
+            .filter(graph=graph, block=False)
+            .annotate(dist=CosineDistance('embedding', target_data.embedding))
+            .filter(dist__lte=max_dist)
+            .order_by('dist')
+            .values('id_data', 'dist')
+    )
+
+    total = qs.count()
+    offset = (page - 1) * page_size
+    page_rows = list(qs[offset: offset + page_size])
+
+    if not page_rows:
+        return Response({"data": [], "total_items": total})
+
+    page_ids = [r['id_data'] for r in page_rows]
+    try:
+        raw_df = read_parquet_s3_pl(f"{user.pk}/{graph_id}/raw.parquet")
+    except FileNotFoundError:
+        return Response("Datos no encontrados", status=404)
+
+    id_to_text = {
+        str(row[graph.id_column]): row[graph.text_column]
+        for row in raw_df.filter(
+            pl.col(graph.id_column).cast(pl.Utf8).is_in(page_ids)
+        ).to_dicts()
+    }
+
+    in_category_ids = set(
+        Data.objects
+            .filter(graph=graph, nodes__isnull=False)
+            .values_list('id_data', flat=True)
+            .distinct()
+    )
+
+    result = [
+        {
+            'id': r['id_data'],
+            'data': id_to_text.get(r['id_data'], ''),
+            'similarity': round(1.0 - r['dist'], 4),
+            'inCategory': 1 if r['id_data'] in in_category_ids else 0,
+        }
+        for r in page_rows
+    ]
+
+    return Response({"data": result, "total_items": total})
 
 @api_view(['GET'])
 def delete_temp_embedding_endpoint(request):
@@ -249,9 +288,11 @@ def jaja(request):
 def confirm_new_category(request):
     """Confirmar el nuevo nodo/categoría seleccionada."""
     try:
-        graph_id = request.GET.get("graph_id")
+        graph_id      = request.GET.get("graph_id")
         name_category = request.GET.get("name")
-        block = int(request.GET.get('block', 0))
+        block         = int(request.GET.get('block', 0))
+        target_id     = request.GET.get("target_id")
+        min_sim       = float(request.GET.get("min_similarity", 0.8))
     except Exception as e:
         return Response(f"Error en los datos proporcionados {e}", status=400)
 
@@ -260,30 +301,43 @@ def confirm_new_category(request):
         graph = Graphs.objects.get(id_user=user, id=graph_id)
     except Graphs.DoesNotExist:
         return Response("Grafo no encontrado", status=400)
-    
-    category = Nodes.objects.filter(node_name=name_category, graph=graph).count()
-    if category != 0:
+
+    if Nodes.objects.filter(node_name=name_category, graph=graph).exists():
         return Response("Categoria ya existente", status=400)
 
-    new_node = nodes(node_name=name_category, graph=graph)  # type: ignore
-    BASE_PATH_USER = f"{user.pk}/{graph_id}"
-    #almacena en su propio archivo parquet la categoria recien creada
-    df_current =  read_tree_s3(f"{BASE_PATH_USER}/currentReview.parquet")
-    save_or_update_tree_s3(
-        f"{BASE_PATH_USER}/{name_category}.parquet",
-       df_current,
+    try:
+        target_data = Data.objects.get(graph=graph, id_data=target_id)
+    except Data.DoesNotExist:
+        return Response("ID de referencia no encontrado", status=400)
+
+    max_dist = 1.0 - min_sim
+    matching_ids = list(
+        Data.objects
+            .filter(graph=graph, block=False)
+            .annotate(dist=CosineDistance('embedding', target_data.embedding))
+            .filter(dist__lte=max_dist)
+            .values_list('id_data', flat=True)
     )
-    delete_parquet_s3(f"{BASE_PATH_USER}/currentReview.parquet")
-    delete_parquet_s3(f"{BASE_PATH_USER}/temp_emb.parquet")
+
+    BASE_PATH_USER = f"{user.pk}/{graph_id}"
+    try:
+        raw_df = read_parquet_s3_pl(f"{BASE_PATH_USER}/raw.parquet")
+    except FileNotFoundError:
+        return Response("Datos no encontrados", status=404)
+
+    cat_df = raw_df.filter(pl.col(graph.id_column).cast(pl.Utf8).is_in(matching_ids))
+    save_or_update_tree_s3(f"{BASE_PATH_USER}/{name_category}.parquet", cat_df)
+
+    new_node = Nodes(node_name=name_category, graph=graph)
     new_node.save()
-    df_global = read_tree_s3(f"{BASE_PATH_USER}/embedding.parquet")
-    ids_bloc = df_current[graph.id_column].values
-    mask = df_global[graph.id_column].isin(ids_bloc)
+    data_qs = Data.objects.filter(graph=graph, id_data__in=matching_ids)
+    Nodes_Category.objects.bulk_create(
+        [Nodes_Category(node=new_node, data=d) for d in data_qs],
+        ignore_conflicts=True,
+    )
     if block == 1:
-        df_global.loc[mask, 'block'] = '1'
-    df_global.loc[mask, COLUM_COUNT_OCURRENCE] =  pd.to_numeric(df_global.loc[mask, COLUM_COUNT_OCURRENCE]) + 1
-    print(df_global.head())
-    save_or_update_tree_s3(f"{BASE_PATH_USER}/embedding.parquet", df_global)
+        data_qs.update(block=True)
+
     return HttpResponse(status=204)
 
 
@@ -291,13 +345,13 @@ def confirm_new_category(request):
 def sample(request):
     """Obtener una muestra del conjunto."""
     try:
-        graph_id = request.GET.get("graph_id")
+        graph_id      = request.GET.get("graph_id")
         random_sample = int(request.GET.get("random", 1))
-        type_sample = int(request.GET.get("sample", 0)) # 0 sobre todos los datos, 1 sobre una categoria, 2 sobre las respuestas en revision
-        sample_size = int(request.GET.get("ss", 5))
-        category = request.GET.get("category", None)
-        page = int(request.GET.get("page", 1))
-        page_size = int(request.GET.get("page_size", 10))
+        type_sample   = int(request.GET.get("sample", 0))  # 0=todos, 1=categoría, 2=en revisión
+        sample_size   = int(request.GET.get("ss", 5))
+        category      = request.GET.get("category", None)
+        page          = int(request.GET.get("page", 1))
+        page_size     = int(request.GET.get("page_size", 10))
     except Exception as e:
         return Response(f"Error en los datos proporcionados {e}", status=400)
 
@@ -308,67 +362,77 @@ def sample(request):
         return Response("Grafo no encontrado", status=400)
 
     BASE_PATH = f"{user.pk}/{graph_id}"
-    data_to_return = pd.DataFrame()
+
+    # IDs con al menos una categoría asignada (para calcular inCategory)
+    in_category_ids = set(
+        Data.objects
+            .filter(graph=graph, nodes__isnull=False)
+            .values_list('id_data', flat=True)
+            .distinct()
+    )
 
     if type_sample == 0:
-        data = read_tree_s3(f"{BASE_PATH}/data.parquet")  # type: ignore
-        embedding_df = read_tree_s3(f"{BASE_PATH}/embedding.parquet")
-        unblocked_ids = embedding_df[embedding_df['block'] != '1'][graph.id_column]
-        data = data[data[graph.id_column].isin(unblocked_ids)]
-        size = data.shape[0]
-        if random_sample == 1:
-            sample_size = sample_size if sample_size < size else size
-            list_data_selected = select_n_random_values(sample_size, 0, size - 1)
-            data_to_return = data.iloc[list_data_selected]
-        else:
-            start_index = (page - 1) * page_size
-            data_to_return = data.iloc[start_index:start_index + page_size]
-        data_to_return = data_to_return.merge(
-            embedding_df[[graph.id_column, COLUM_COUNT_OCURRENCE]],
-            on=graph.id_column, how='left'
+        unblocked_ids = set(
+            Data.objects.filter(graph=graph, block=False)
+                        .values_list('id_data', flat=True)
         )
-        data_to_return['inCategory'] = (pd.to_numeric(data_to_return[COLUM_COUNT_OCURRENCE], errors='coerce').fillna(0) > 0).astype(int)
+        try:
+            df = read_parquet_s3_pl(f"{BASE_PATH}/raw.parquet")
+        except FileNotFoundError:
+            return Response("Datos no encontrados", status=404)
+
+        df = df.filter(pl.col(graph.id_column).is_in(unblocked_ids))
+        size = df.height
+
+        if random_sample == 1:
+            df_sample = df.sample(n=min(sample_size, size), shuffle=True)
+        else:
+            start = (page - 1) * page_size
+            df_sample = df.slice(start, page_size)
+
+        df_sample = df_sample.with_columns(
+            pl.col(graph.id_column).is_in(in_category_ids).cast(pl.Int8).alias('inCategory')
+        )
 
     elif type_sample == 1:
         try:
-            data = read_tree_s3(f"{BASE_PATH}/{category}.parquet")  # type: ignore
-        except Exception:
+            df = read_parquet_s3_pl(f"{BASE_PATH}/{category}.parquet")
+        except FileNotFoundError:
             return Response("Categoria invalida", status=400)
-        size = data.shape[0]
+
+        size = df.height
         if random_sample == 1:
-            sample_size = sample_size if sample_size < size else size
-            list_data_selected: list = select_n_random_values(sample_size, 0, size - 1)
-            data_to_return = data.iloc[list_data_selected]
+            df_sample = df.sample(n=min(sample_size, size), shuffle=True)
         else:
-            start_index = (page - 1) * page_size
-            data_to_return = data.iloc[start_index:start_index + page_size]
-    else:
+            start = (page - 1) * page_size
+            df_sample = df.slice(start, page_size)
+
+    else:  # type_sample == 2
         try:
-            data = read_tree_s3(f"{BASE_PATH}/currentReview.parquet")  # type: ignore
-        except Exception:
+            df = read_parquet_s3_pl(f"{BASE_PATH}/currentReview.parquet")
+        except FileNotFoundError:
             return Response("No hay categoria actual en revisión", status=400)
-        size = data.shape[0]
-        embedding_df = read_tree_s3(f"{BASE_PATH}/embedding.parquet")
+
+        size = df.height
         if random_sample == 1:
-            sample_size = sample_size if sample_size < size else size
-            list_data_selected = select_n_random_values(sample_size, 0, size - 1)
-            data_to_return = data.iloc[list_data_selected]
+            df_sample = df.sample(n=min(sample_size, size), shuffle=True)
         else:
-            start_index = (page - 1) * page_size
-            data_to_return = data.iloc[start_index:start_index + page_size]
-        data_to_return = data_to_return.merge(
-            embedding_df[[graph.id_column, COLUM_COUNT_OCURRENCE]],
-            on=graph.id_column, how='left'
+            start = (page - 1) * page_size
+            df_sample = df.slice(start, page_size)
+
+        df_sample = df_sample.with_columns(
+            pl.col(graph.id_column).is_in(in_category_ids).cast(pl.Int8).alias('inCategory')
         )
-        data_to_return['inCategory'] = (pd.to_numeric(data_to_return[COLUM_COUNT_OCURRENCE], errors='coerce').fillna(0) > 0).astype(int)
 
     cols = [graph.id_column, graph.text_column]
-    if 'inCategory' in data_to_return.columns:
+    if 'inCategory' in df_sample.columns:
         cols.append('inCategory')
-    result = data_to_return[cols].rename(
-        columns={graph.id_column: 'id', graph.text_column: 'data'}
-    )
-    return Response({"data": result.to_dict("records"), "total_items": data.shape[0]})
+
+    result_df = df_sample.select(cols).rename({
+        graph.id_column: 'id',
+        graph.text_column: 'data',
+    })
+    return Response({"data": result_df.to_dicts(), "total_items": size})
 
 
 @api_view(['GET'])
@@ -456,37 +520,35 @@ def get_categorized_data(request):
     except Graphs.DoesNotExist:
         return Response("Grafo no encontrado", status=400)
 
-    BASE_PATH = f"{user.pk}/{graph_id}"
-    id_column = graph.id_column
-    text_column = graph.text_column
-
     try:
-        main_df = read_tree_s3(f"{BASE_PATH}/data.parquet")
+        raw_df = read_parquet_s3_pl(f"{user.pk}/{graph_id}/raw.parquet")
     except FileNotFoundError:
-        return Response("El archivo data.parquet no se encontró", status=400)
+        return Response("Datos no encontrados", status=404)
 
-    main_df['categorias'] = [[] for _ in range(len(main_df))]
+    # Obtener asignaciones id_data → categorías desde la DB
+    assignments = (
+        Nodes_Category.objects
+            .filter(node__graph=graph)
+            .values('data__id_data', 'node__node_name')
+    )
 
-    for node in Nodes.objects.filter(graph=graph):
-        node_name = node.node_name
-        try:
-            category_df = read_tree_s3(f"{BASE_PATH}/{node_name}.parquet")
-            for index, row in category_df.iterrows():
-                main_df_index = main_df[main_df[id_column] == row[id_column]].index
-                if not main_df_index.empty:
-                    main_df.loc[main_df_index[0], 'categorias'].append(node_name)
-        except FileNotFoundError:
-            print(f"Warning: Category parquet file for node '{node_name}' not found. Skipping.")
-            continue
-        except Exception as e:
-            print(f"Error processing category '{node_name}': {e}")
-            continue
+    # Agrupar: id_data → lista de categorías
+    id_to_cats: dict[str, list[str]] = {}
+    for row in assignments:
+        id_val = str(row['data__id_data'])
+        id_to_cats.setdefault(id_val, []).append(row['node__node_name'])
 
-    main_df['categorias'] = main_df['categorias'].apply(lambda x: ','.join(x))
+    # Añadir columna 'categorias' al dataframe
+    id_col = graph.id_column
+    categorias = [
+        ','.join(id_to_cats.get(str(v), []))
+        for v in raw_df[id_col].to_list()
+    ]
+    result_df = raw_df.with_columns(pl.Series('categorias', categorias))
 
-    response = HttpResponse(content_type='text/csv')
+    csv_bytes = result_df.write_csv().encode('utf-8')
+    response = HttpResponse(csv_bytes, content_type='text/csv; charset=utf-8')
     response['Content-Disposition'] = f'attachment; filename="{graph_id}_categorized_data.csv"'
-    main_df.to_csv(path_or_buf=response, index=False)
     return response
 
 
@@ -589,34 +651,35 @@ def delete_node(request):
     try:
         if request.content_type and 'application/json' in request.content_type:
             graph_id = request.data.get("graph_id")
-            node_id = request.data.get("node_id")
+            node_id  = request.data.get("node_id")
         else:
             graph_id = request.POST.get("graph_id")
-            node_id = request.POST.get("node_id")
+            node_id  = request.POST.get("node_id")
 
         if not all([graph_id, node_id]):
             return Response("Faltan parámetros obligatorios: graph_id, node_id", status=400)
 
-        user = request.user
+        user  = request.user
         graph = Graphs.objects.get(id=graph_id, id_user=user)
-        node = Nodes.objects.get(id=node_id, graph=graph)
-        try:
-            node_parquet_path = f"{user.pk}/{graph_id}/{node.node_name}.parquet"
-            df_delete = read_tree_s3(node_parquet_path)
-            delete_parquet_s3(node_parquet_path)
-        except:
-            print(f"Archivo no encontrado, continuando: {node_parquet_path}")
-        node.delete()
-        try:
-            df_global = read_tree_s3(f"{user.pk}/{graph_id}/embedding.parquet")
-            ids_for_delete = df_delete[graph.id_column].values
-            mask = df_global[graph.id_column].isin(ids_for_delete)
-            df_global.loc[mask, COLUM_COUNT_OCURRENCE] = pd.to_numeric(df_global.loc[mask, COLUM_COUNT_OCURRENCE]) - 1
-            df_global.loc[mask, 'block'] = '0'
-            save_or_update_tree_s3(f"{user.pk}/{graph_id}/embedding.parquet", df_global)
+        node  = Nodes.objects.get(id=node_id, graph=graph)
 
+        # IDs de las respuestas en esta categoría (antes de borrar el nodo)
+        ids_in_node = list(
+            Nodes_Category.objects.filter(node=node)
+                .values_list('data__id_data', flat=True)
+        )
+
+        # Borrar parquet de la categoría en S3
+        try:
+            delete_parquet_s3(f"{user.pk}/{graph_id}/{node.node_name}.parquet")
         except FileNotFoundError:
-            print(f"Archivo no encontrado, continuando: {node_parquet_path}")
+            pass
+
+        # Borrar nodo (CASCADE elimina Nodes_Category y Edge automáticamente)
+        node.delete()
+
+        # Desbloquear respuestas que pertenecían a esta categoría
+        Data.objects.filter(graph=graph, id_data__in=ids_in_node).update(block=False)
 
         return HttpResponse(status=204)
 
@@ -708,16 +771,15 @@ def get_progress(request):
         return Response("graph_id es requerido", status=400)
     user = request.user
     try:
-        Graphs.objects.get(id_user=user, id=graph_id)
+        graph = Graphs.objects.get(id_user=user, id=graph_id)
     except Graphs.DoesNotExist:
         return Response("Grafo no encontrado", status=400)
 
-    df = read_tree_s3(f"{user.pk}/{graph_id}/embedding.parquet")
-    total = len(df)
+    total = Data.objects.filter(graph=graph).count()
     if total == 0:
         return Response({"progress": 0.0})
-    assigned = (pd.to_numeric(df[COLUM_COUNT_OCURRENCE], errors='coerce').fillna(0) > 0).sum()
-    progress = round(float(assigned / total * 100), 2)
+    assigned = Data.objects.filter(graph=graph, nodes__isnull=False).distinct().count()
+    progress = round(assigned / total * 100, 2)
     return Response({"progress": progress})
 
 

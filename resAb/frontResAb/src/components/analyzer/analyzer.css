@@ -229,6 +229,18 @@
   background-color: var(--color-destructive-muted) !important;
 }
 
+.context-menu button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.context-menu-error {
+  display: block;
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--font-size-xs);
+  color: var(--color-destructive);
+}
+
 /* ─── Confirm Category ───────────────────────────────────────────────────────── */
 
 .confirm-category {
